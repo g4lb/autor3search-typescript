@@ -57,7 +57,7 @@ beforeAll(async () => {
   // No file extension, matching the shape of a real npm-installed
   // `node_modules/.bin/<name>` entry -- npm's own bin symlinks are never
   // named `*.js` on POSIX.
-  symlinkPath = path.join(symlinkDir, 'autoresearch-typescript')
+  symlinkPath = path.join(symlinkDir, 'autor3search-typescript')
   await symlink(DIST_MAIN, symlinkPath)
 }, BUILD_TIMEOUT_MS)
 

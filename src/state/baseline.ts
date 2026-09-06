@@ -58,7 +58,7 @@ export async function readBaseline(dir: string): Promise<BaselineRecord> {
     text = await readFile(baselinePath(dir), 'utf8')
   } catch {
     throw new Error(
-      `no baseline found at ${baselinePath(dir)}. Run "autoresearch-typescript baseline -tag <tag>" first.`,
+      `no baseline found at ${baselinePath(dir)}. Run "autor3search-typescript baseline -tag <tag>" first.`,
     )
   }
   return JSON.parse(text) as BaselineRecord

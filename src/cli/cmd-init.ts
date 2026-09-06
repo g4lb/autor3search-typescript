@@ -11,8 +11,8 @@ import { detect, type PackageManager } from '../pm/detect.js'
 import type { RunCtx } from './runctx.js'
 
 /**
- * `.autoresearch/*` plus a `!.autoresearch/config.yaml` negation, NOT a
- * blanket `.autoresearch/` -- everything else under that directory (there is
+ * `.autor3search/*` plus a `!.autor3search/config.yaml` negation, NOT a
+ * blanket `.autor3search/` -- everything else under that directory (there is
  * nothing else there today, but nothing prevents a future addition) stays
  * gitignored, while `config.yaml` itself must be committed: it is the run
  * configuration a KEEP has to stay reproducible and auditable against later
@@ -22,8 +22,8 @@ import type { RunCtx } from './runctx.js'
  * `.gitignore` rules in file order.
  */
 const GITIGNORE_ENTRIES = [
-  '.autoresearch/*',
-  '!.autoresearch/config.yaml',
+  '.autor3search/*',
+  '!.autor3search/config.yaml',
   'results.tsv',
   'run.log',
   '*.cpuprofile',
@@ -251,7 +251,7 @@ function fail(message: string): number {
 }
 
 /**
- * `init`: writes `.autoresearch/config.yaml`, `program.md` and appends the
+ * `init`: writes `.autor3search/config.yaml`, `program.md` and appends the
  * harness's own output paths to `.gitignore`.
  *
  * Every refusal below happens before anything is written -- a command that
@@ -332,7 +332,7 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
 
     const cfg: Config = { ...defaultConfig(), scope, testCommand, buildCommand, typecheckCommand }
 
-    // 6. write .autoresearch/config.yaml.
+    // 6. write .autor3search/config.yaml.
     await mkdir(path.dirname(ctx.configPath), { recursive: true })
     await writeFile(ctx.configPath, renderConfigYaml(cfg), 'utf8')
 
@@ -362,15 +362,15 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
     process.stdout.write('discovered benchmarks:\n')
     for (const b of benchmarks) process.stdout.write(`  - ${b.id}\n`)
     process.stdout.write(
-      '\nwrote .autoresearch/config.yaml and program.md. Review both, then:\n' +
-        // .autoresearch/config.yaml is the one file under .autoresearch/
+      '\nwrote .autor3search/config.yaml and program.md. Review both, then:\n' +
+        // .autor3search/config.yaml is the one file under .autor3search/
         // meant to be committed -- it is the run configuration a KEEP must
         // stay reproducible and auditable against later (spec section 13).
         // Everything else the harness writes (baselines, locks, stop
         // requests) lives outside the repository entirely; nothing else
-        // under .autoresearch/ exists to commit.
-        '  1. git add .autoresearch/config.yaml program.md .gitignore && git commit\n' +
-        '  2. autoresearch-typescript baseline\n' +
+        // under .autor3search/ exists to commit.
+        '  1. git add .autor3search/config.yaml program.md .gitignore && git commit\n' +
+        '  2. autor3search-typescript baseline\n' +
         '  3. hand this repository and program.md to your coding agent\n',
     )
     return 0

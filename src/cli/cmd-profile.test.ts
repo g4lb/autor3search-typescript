@@ -71,7 +71,7 @@ describe('cmdProfile', () => {
     const initOut = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     expect(await cmdInit(ctx, [])).toBe(0)
     initOut.mockRestore()
-    // No cmdBaseline call at all -- no .autoresearch state, no run branch.
+    // No cmdBaseline call at all -- no .autor3search state, no run branch.
 
     captureOutput()
     const code = await cmdProfile(ctx, [])
@@ -94,7 +94,7 @@ describe('cmdProfile', () => {
     expect(stdout.join('')).toMatch(/countWords/)
   }, 30_000)
 
-  it('writes a .cpuprofile under .autoresearch/profiles and prints its path', async () => {
+  it('writes a .cpuprofile under .autor3search/profiles and prints its path', async () => {
     const root = await makeDemoRepo()
     const ctx = ctxFor(root)
     const initOut = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
@@ -109,7 +109,7 @@ describe('cmdProfile', () => {
     const match = text.match(/profile written to (\S+\.cpuprofile)/)
     expect(match).not.toBeNull()
     const profilePath = match![1]!
-    expect(profilePath.startsWith(path.join(root, '.autoresearch', 'profiles'))).toBe(true)
+    expect(profilePath.startsWith(path.join(root, '.autor3search', 'profiles'))).toBe(true)
     expect(await exists(profilePath)).toBe(true)
   }, 30_000)
 

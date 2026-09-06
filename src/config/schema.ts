@@ -1,5 +1,5 @@
 /** The config location, relative to the repository root. */
-export const CONFIG_PATH = '.autoresearch/config.yaml'
+export const CONFIG_PATH = '.autor3search/config.yaml'
 
 /** Lockfiles we recognise, in package-manager detection order. */
 export const LOCKFILES = [

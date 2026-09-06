@@ -31,7 +31,7 @@ async function git(cwd: string, args: string[]): Promise<void> {
 
 /**
  * Substitutes the value of one or more top-level `key: value` lines in
- * `.autoresearch/config.yaml`. `value` must already be YAML-ready (a quoted
+ * `.autor3search/config.yaml`. `value` must already be YAML-ready (a quoted
  * string via `JSON.stringify`, a bare number, or an array literal) -- this
  * mirrors exactly what `cmd-init`'s own renderer writes, so the edited file
  * stays a config `loadConfig` accepts.
@@ -50,7 +50,7 @@ async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promis
 async function initWithConfig(root: string, ctx: RunCtx, patches: Record<string, string> = {}): Promise<void> {
   expect(await cmdInit(ctx, [])).toBe(0)
   if (Object.keys(patches).length > 0) await patchConfig(ctx, patches)
-  await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+  await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 
@@ -235,7 +235,7 @@ describe('runEval: gate order', () => {
       `${await readFile(path.join(root, '.gitignore'), 'utf8')}\n*.local.log\n`,
       'utf8',
     )
-    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+    await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
     await git(root, ['commit', '-q', '-m', 'init, with an ordinary extra gitignore rule'])
     expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
 
@@ -249,9 +249,9 @@ describe('runEval: gate order', () => {
     expect(outcome.failedGate).not.toBe('scope')
   })
 
-  it('gate 2: fails when .autoresearch/config.yaml changed since baseline', async () => {
+  it('gate 2: fails when .autor3search/config.yaml changed since baseline', async () => {
     const { ctx } = await setup()
-    // .autoresearch/ is gitignored -- this is deliberately an uncommitted,
+    // .autor3search/ is gitignored -- this is deliberately an uncommitted,
     // untracked edit, which the scope gate (git-based) cannot even see. Only
     // a direct config-hash comparison catches it.
     await patchConfig(ctx, { max_regress_pct: '99' })

@@ -106,13 +106,13 @@ describe('checkScope', () => {
     expect(v).toHaveLength(2)
   })
 
-  // Priority 5 from the final whole-branch review: .autoresearch/config.yaml
+  // Priority 5 from the final whole-branch review: .autor3search/config.yaml
   // is now a tracked, committed file, so it is visible to changedFiles like
   // any other -- but it already has its own dedicated, more specific
   // protection (pipeline/eval.ts gate 2, hash-based). It must not ALSO be
   // reported as a generic scope violation, which would race that more
   // useful diagnosis to the same conclusion.
-  it('exempts .autoresearch/config.yaml from scope -- it has its own dedicated gate', () => {
+  it('exempts .autor3search/config.yaml from scope -- it has its own dedicated gate', () => {
     expect(checkScope([CONFIG_PATH], SCOPE)).toEqual([])
   })
 })

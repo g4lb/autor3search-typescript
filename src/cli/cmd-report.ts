@@ -35,7 +35,7 @@ export async function cmdReport(ctx: RunCtx, _argv: readonly string[]): Promise<
     return fail(messageOf(e))
   }
 
-  const lines: string[] = ['autoresearch-typescript report', '']
+  const lines: string[] = ['autor3search-typescript report', '']
 
   if (rows.length === 0) {
     lines.push(

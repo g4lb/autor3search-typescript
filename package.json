@@ -1,12 +1,12 @@
 {
-  "name": "autoresearch-typescript",
+  "name": "autor3search-typescript",
   "version": "0.1.0",
   "description": "Autonomous AI-driven performance optimization for any TypeScript repository.",
   "type": "module",
   "license": "MIT",
   "author": "Gal Be <galevgi@gmail.com>",
   "engines": { "node": ">=22" },
-  "bin": { "autoresearch-typescript": "./dist/cli/main.js" },
+  "bin": { "autor3search-typescript": "./dist/cli/main.js" },
   "files": ["dist", "templates", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

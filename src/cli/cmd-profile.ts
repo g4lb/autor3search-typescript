@@ -15,7 +15,7 @@ const TOP_N = 15
  * without a baseline ever existing, and the output is meant for a human to
  * open locally, not for the harness's own cross-run state.
  */
-const PROFILE_DIRNAME = path.join('.autoresearch', 'profiles')
+const PROFILE_DIRNAME = path.join('.autor3search', 'profiles')
 
 function fail(message: string): number {
   process.stderr.write(`error: ${message}\n`)
@@ -54,7 +54,7 @@ function printHotFrames(frames: readonly HotFrame[], totalSelfUs: number): void 
  * Deliberately does not touch `baseline` or the state home at all: this is
  * reconnaissance a human runs BEFORE starting the loop, to decide whether
  * the benchmarks even point at the right code, so it must work with only
- * `.autoresearch/config.yaml` in place.
+ * `.autor3search/config.yaml` in place.
  */
 export async function cmdProfile(ctx: RunCtx, argv: readonly string[]): Promise<number> {
   let benchtimeOverride: string | undefined
@@ -118,7 +118,7 @@ export async function cmdProfile(ctx: RunCtx, argv: readonly string[]): Promise<
 
   const profileDir = path.join(ctx.repoRoot, PROFILE_DIRNAME)
 
-  process.stdout.write('autoresearch-typescript profile -- where does the time actually go?\n\n')
+  process.stdout.write('autor3search-typescript profile -- where does the time actually go?\n\n')
 
   let failures = 0
   for (const b of benchmarks) {

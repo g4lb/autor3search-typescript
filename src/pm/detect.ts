@@ -89,19 +89,19 @@ export async function assertSinglePackage(pkgJsonText: string, root: string): Pr
   if (isWorkspaceDeclaration(workspaces)) {
     throw new Error(
       'this repository declares npm/yarn workspaces (a "workspaces" key in package.json). ' +
-        'autoresearch-typescript v0.1 supports single-package repositories only: in a ' +
+        'autor3search-typescript v0.1 supports single-package repositories only: in a ' +
         'workspace the scope gate, the freeze set and the install layout all mean something ' +
         'different, and getting any of them wrong would weaken the guarantee this tool gives. ' +
-        'Run autoresearch-typescript from inside one of the workspace packages instead.',
+        'Run autor3search-typescript from inside one of the workspace packages instead.',
     )
   }
   if (await exists(path.join(root, 'pnpm-workspace.yaml'))) {
     throw new Error(
       'this repository is a pnpm workspace (a pnpm-workspace.yaml is present). ' +
-        'autoresearch-typescript v0.1 supports single-package repositories only: in a ' +
+        'autor3search-typescript v0.1 supports single-package repositories only: in a ' +
         'workspace the scope gate, the freeze set and the install layout all mean something ' +
         'different, and getting any of them wrong would weaken the guarantee this tool gives. ' +
-        'Run autoresearch-typescript from inside one of the workspace packages instead.',
+        'Run autor3search-typescript from inside one of the workspace packages instead.',
     )
   }
 }
@@ -115,7 +115,7 @@ export async function detect(root: string): Promise<Detected> {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(
         `no package.json in ${root}: this does not look like a Node package. ` +
-          'Run autoresearch-typescript from the package root (the directory that contains ' +
+          'Run autor3search-typescript from the package root (the directory that contains ' +
           'package.json).',
       )
     }

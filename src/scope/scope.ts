@@ -50,7 +50,7 @@ const IMMUTABLE = new Set(IMMUTABLE_FILES)
 export function checkScope(changed: string[], scope: string[]): ScopeViolation[] {
   const out: ScopeViolation[] = []
   for (const file of changed) {
-    // `.autoresearch/config.yaml` is now a tracked, committed file (spec
+    // `.autor3search/config.yaml` is now a tracked, committed file (spec
     // section 13), so any edit to it is visible to `changedFiles` like any
     // other file -- but it already has its own dedicated, more specific
     // protection: `pipeline/eval.ts` gate 2 hashes it against what baseline

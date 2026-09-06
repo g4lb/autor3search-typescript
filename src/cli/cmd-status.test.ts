@@ -47,7 +47,7 @@ async function setup(): Promise<{ root: string; ctx: RunCtx }> {
   const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   try {
     expect(await cmdInit(ctx, [])).toBe(0)
-    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+    await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
     await git(root, ['commit', '-q', '-m', 'init'])
     expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
   } finally {
@@ -178,13 +178,13 @@ describe('cmdStatus', () => {
     expect(code).toBe(0)
     const text = stdout.join('')
     expect(text).toMatch(/tag "sep6"/)
-    expect(text).toMatch(/run branch:\s+autoresearch-typescript\/sep6/)
+    expect(text).toMatch(/run branch:\s+autor3search-typescript\/sep6/)
     expect(text).toMatch(/current branch:\s+main.*not on the run branch/)
   })
 
   it('infers -tag from the current run branch when -tag is omitted', async () => {
     const { ctx } = await setup()
-    // baseline leaves the repo checked out on "autoresearch-typescript/sep6";
+    // baseline leaves the repo checked out on "autor3search-typescript/sep6";
     // every other test in this file passes -tag explicitly, so this is the
     // only coverage of inferTagFromBranch actually running end to end.
     captureOutput()
@@ -218,7 +218,7 @@ describe('cmdStatus', () => {
 
     expect(code).toBe(0)
     const text = stdout.join('')
-    expect(text).toMatch(/run branch:\s+autoresearch-typescript\/sep6/)
+    expect(text).toMatch(/run branch:\s+autor3search-typescript\/sep6/)
     expect(text).toMatch(new RegExp(`frozen commit:\\s+${head.slice(0, 7)}`))
     expect(text).toMatch(new RegExp(`measure commit:\\s+${head.slice(0, 7)}`))
     expect(text).toMatch(/experiments:\s+3 total/)

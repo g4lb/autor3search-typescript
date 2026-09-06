@@ -44,7 +44,7 @@ describe('writeBaseline / readBaseline', () => {
   it('produces a clear, actionable error when no baseline exists for the tag', async () => {
     const dir = await tmp()
     await expect(readBaseline(dir)).rejects.toThrow(
-      /no baseline.*autoresearch-typescript baseline -tag/,
+      /no baseline.*autor3search-typescript baseline -tag/,
     )
   })
 

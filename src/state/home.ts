@@ -3,9 +3,9 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { hashString } from '../freeze/manifest.js'
 
-export const STATE_HOME_ENV = 'AUTORESEARCH_TYPESCRIPT_STATE_HOME'
+export const STATE_HOME_ENV = 'AUTOR3SEARCH_TYPESCRIPT_STATE_HOME'
 
-const APP = 'autoresearch-typescript'
+const APP = 'autor3search-typescript'
 
 /** Tags become directory names, so they must be a single safe segment. */
 const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/

@@ -40,7 +40,7 @@ async function git(cwd: string, args: string[]): Promise<void> {
 /** Runs `init`, commits everything init produced that is meant to be committed. */
 async function initAndCommit(root: string, ctx: RunCtx): Promise<void> {
   expect(await cmdInit(ctx, [])).toBe(0)
-  await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+  await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 
@@ -63,7 +63,7 @@ async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promis
 async function initWithConfigAndCommit(root: string, ctx: RunCtx, patches: Record<string, string>): Promise<void> {
   expect(await cmdInit(ctx, [])).toBe(0)
   await patchConfig(ctx, patches)
-  await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+  await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 
@@ -135,7 +135,7 @@ describe('cmdBaseline', () => {
     expect(stderr.join('')).toMatch(/not clean|dirty|uncommitted/i)
     const dir = runDir(root, 'sep6')
     expect(await exists(dir)).toBe(false)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(false)
   })
 
   // Scoped re-review finding: the dirty-tree check must not trust
@@ -161,7 +161,7 @@ describe('cmdBaseline', () => {
     expect(stderr.join('')).toMatch(/not clean|dirty|uncommitted/i)
     const dir = runDir(root, 'sep6')
     expect(await exists(dir)).toBe(false)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(false)
   })
 
   it('refuses when no config exists, and leaves no run directory or branch', async () => {
@@ -175,7 +175,7 @@ describe('cmdBaseline', () => {
     expect(stderr.join('')).toMatch(/config/i)
     const dir = runDir(root, 'sep6')
     expect(await exists(dir)).toBe(false)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(false)
   })
 
   it('refuses to reuse an existing tag without -force', async () => {
@@ -197,7 +197,7 @@ describe('cmdBaseline', () => {
     // The refusal must not have touched anything the first run created.
     const after = await readBaseline(dir)
     expect(after).toEqual(before)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(true)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(true)
   })
 
   it('recreates a baseline for an existing tag with -force', async () => {
@@ -213,11 +213,11 @@ describe('cmdBaseline', () => {
     const code = await cmdBaseline(ctx, ['-tag', 'sep6', '-force'])
 
     expect(code).toBe(0)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(true)
-    expect(await currentBranch(root)).toBe('autoresearch-typescript/sep6')
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(true)
+    expect(await currentBranch(root)).toBe('autor3search-typescript/sep6')
   })
 
-  it('creates the run branch autoresearch-typescript/<tag> and checks it out', async () => {
+  it('creates the run branch autor3search-typescript/<tag> and checks it out', async () => {
     const root = await makeDemoRepo()
     const ctx = ctxFor(root)
     captureOutput()
@@ -227,8 +227,8 @@ describe('cmdBaseline', () => {
     const code = await cmdBaseline(ctx, ['-tag', 'sep6'])
 
     expect(code).toBe(0)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(true)
-    expect(await currentBranch(root)).toBe('autoresearch-typescript/sep6')
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(true)
+    expect(await currentBranch(root)).toBe('autor3search-typescript/sep6')
   })
 
   it('records frozenCommit and measureCommit as equal at the start', async () => {
@@ -422,7 +422,7 @@ describe('cmdBaseline', () => {
     // the main repo is back on the branch it started from.
     const dir = runDir(root, 'sep6')
     expect(await exists(dir)).toBe(false)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(false)
     expect(await currentBranch(root)).toBe(originalBranch)
 
     // Fix the repository (remove the broken benchmark) and retry with the
@@ -433,7 +433,7 @@ describe('cmdBaseline', () => {
     captureOutput()
     const retryCode = await cmdBaseline(ctx, ['-tag', 'sep6'])
     expect(retryCode).toBe(0)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(true)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(true)
   })
 
   it('refuses a declared benchmark id that no longer exists', async () => {
@@ -448,7 +448,7 @@ describe('cmdBaseline', () => {
       cfgText.replace(/^benchmarks: \[\]$/m, 'benchmarks: ["src/nope.bench.ts:benchNope"]'),
       'utf8',
     )
-    // .autoresearch/config.yaml is a tracked, committed file (spec section
+    // .autor3search/config.yaml is a tracked, committed file (spec section
     // 13): baseline refuses an unclean tree before it ever reaches the
     // "declared benchmark exists" check below, so this edit must be
     // committed like any other for that check to be what this test proves.
@@ -462,7 +462,7 @@ describe('cmdBaseline', () => {
     expect(stderr.join('')).toMatch(/src\/nope\.bench\.ts:benchNope/)
     const dir = runDir(root, 'sep6')
     expect(await exists(dir)).toBe(false)
-    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
+    expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(false)
   })
 
   it('refuses a missing -tag', async () => {

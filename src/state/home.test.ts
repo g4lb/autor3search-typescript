@@ -27,7 +27,7 @@ describe('runDir', () => {
     const c = runDir('/repos/one', 'sep7', env)
     expect(a).not.toBe(b)
     expect(a).not.toBe(c)
-    expect(a.startsWith('/s/autoresearch-typescript/')).toBe(true)
+    expect(a.startsWith('/s/autor3search-typescript/')).toBe(true)
   })
 
   it('is stable for the same repo and tag', () => {

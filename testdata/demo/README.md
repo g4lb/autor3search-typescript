@@ -1,7 +1,7 @@
 # wordcount-demo
 
 A tiny, real TypeScript package used as a test fixture by
-`autoresearch-typescript`'s own test suite. It is not a toy: it genuinely
+`autor3search-typescript`'s own test suite. It is not a toy: it genuinely
 builds (there is nothing to build -- see below), tests and benchmarks, so
 that the harness's own tests exercise a real target rather than a mock.
 
@@ -11,7 +11,7 @@ This package has no `dependencies` and no `devDependencies` at all. It runs
 directly on Node's built-in test runner (`node:test`) and Node's native
 TypeScript type stripping -- no `tsc`, no `ts-node`, no `vitest`. That keeps
 `npm ci` against this fixture instant and fully offline wherever
-`autoresearch-typescript`'s own tests spin up a scratch copy of it, and it
+`autor3search-typescript`'s own tests spin up a scratch copy of it, and it
 demonstrates that the harness genuinely does not care which test runner or
 build step the measured repository uses.
 

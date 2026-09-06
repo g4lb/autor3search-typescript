@@ -13,7 +13,7 @@ import type { RunCtx } from './runctx.js'
 export async function cmdDoctor(_ctx: RunCtx, _argv: string[]): Promise<number> {
   const checks = await runChecks()
 
-  process.stdout.write('autoresearch-typescript doctor -- can this machine measure reliably?\n\n')
+  process.stdout.write('autor3search-typescript doctor -- can this machine measure reliably?\n\n')
   for (const c of checks) {
     const mark = c.ok ? 'OK  ' : 'WARN'
     process.stdout.write(`[${mark}] ${c.name}: ${c.detail}\n`)

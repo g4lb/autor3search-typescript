@@ -9,7 +9,7 @@ import type { RunCtx } from './runctx.js'
 function ctxFor(root: string): RunCtx {
   return {
     repoRoot: root,
-    configPath: path.join(root, '.autoresearch/config.yaml'),
+    configPath: path.join(root, '.autor3search/config.yaml'),
     resultsPath: path.join(root, RESULTS_PATH),
     logPath: path.join(root, 'run.log'),
   }

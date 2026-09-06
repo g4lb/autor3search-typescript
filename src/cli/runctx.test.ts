@@ -85,7 +85,7 @@ describe('resolveCtx', () => {
     const root = await scratchRepo()
     const ctx = await resolveCtx(['-C', root])
     const want = await repoRoot(root)
-    expect(ctx.configPath).toBe(path.join(want, '.autoresearch', 'config.yaml'))
+    expect(ctx.configPath).toBe(path.join(want, '.autor3search', 'config.yaml'))
     expect(ctx.resultsPath).toBe(path.join(want, 'results.tsv'))
     expect(ctx.logPath).toBe(path.join(want, LOG_PATH))
     expect(LOG_PATH).toBe('run.log')

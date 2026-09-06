@@ -1,6 +1,6 @@
-# autoresearch-typescript
+# autor3search-typescript
 
-Let an AI coding agent loose on your repository's performance, without letting it grade its own homework. `autoresearch-typescript` freezes your tests and benchmarks, measures every change the agent proposes against a baseline it cannot touch, and only keeps a commit that is a real, statistically significant, material win.
+Let an AI coding agent loose on your repository's performance, without letting it grade its own homework. `autor3search-typescript` freezes your tests and benchmarks, measures every change the agent proposes against a baseline it cannot touch, and only keeps a commit that is a real, statistically significant, material win.
 
 Licensed under the [MIT License](./LICENSE). Copyright (c) 2026 Gal Be.
 
@@ -11,9 +11,9 @@ Once you've run `init` and `baseline` (see Quick start below), this is the entir
 ```
 Read program.md in this repository's root. It is your complete instruction set for an
 autonomous performance-optimization run. Follow it exactly: one hypothesis per commit,
-run `autoresearch-typescript eval --json` after each one, and apply its verdict before
+run `autor3search-typescript eval --json` after each one, and apply its verdict before
 touching anything else. Keep looping until a verdict reports "stop_requested": true,
-then run `autoresearch-typescript report` and summarize what happened.
+then run `autor3search-typescript report` and summarize what happened.
 ```
 
 `program.md` is generated for your repository by `init` — it names the benchmarks in scope, spells out the KEEP/DISCARD/FAIL/CRASH contract, lists everything the agent must never touch, and ends with a bank of generic V8/TypeScript performance ideas for when the agent is out of hypotheses. You should read and edit it before handing it over; it is the only file in this system meant for both a human and an agent to read.
@@ -33,7 +33,7 @@ An unattended loop that, commit by commit:
 | | you edit | the agent edits |
 |---|---|---|
 | `program.md` | yes, before handing it over — never after | never (enforced: editing it is a scope violation) |
-| `.autoresearch/config.yaml` | yes | never (enforced: a config hash mismatch FAILs the experiment) |
+| `.autor3search/config.yaml` | yes | never (enforced: a config hash mismatch FAILs the experiment) |
 | source files under `scope` | rarely | yes — this is the whole point |
 | `*.test.ts`, `*.spec.ts`, `*.bench.ts` | yes | never (enforced: frozen content is restored before every measurement) |
 | `package.json`, lockfiles, `tsconfig.json` | yes | never (enforced: immutable regardless of `scope`) |
@@ -45,11 +45,11 @@ The measurement state — baselines, locks, stop requests — lives outside the 
 ## Quick start
 
 ```bash
-npm install --save-dev autoresearch-typescript
-npx autoresearch-typescript init
-# review .autoresearch/config.yaml and program.md, then:
-git add .autoresearch/config.yaml program.md .gitignore && git commit -m "chore: add autoresearch-typescript"
-npx autoresearch-typescript baseline -tag <tag>
+npm install --save-dev autor3search-typescript
+npx autor3search-typescript init
+# review .autor3search/config.yaml and program.md, then:
+git add .autor3search/config.yaml program.md .gitignore && git commit -m "chore: add autor3search-typescript"
+npx autor3search-typescript baseline -tag <tag>
 # hand the repo and program.md to your agent, using the prompt above
 ```
 
@@ -58,10 +58,10 @@ npx autoresearch-typescript baseline -tag <tag>
 ## Watching and stopping a run
 
 ```bash
-npx autoresearch-typescript status -tag <tag>   # branch, commits, worktree, experiment counts, in-flight eval — read-only
-npx autoresearch-typescript stop -tag <tag>     # ask the agent to stop after its current experiment
-npx autoresearch-typescript stop -tag <tag> -force   # also signal the running eval to abandon it now
-npx autoresearch-typescript stop -tag <tag> -clear   # cancel a pending stop
+npx autor3search-typescript status -tag <tag>   # branch, commits, worktree, experiment counts, in-flight eval — read-only
+npx autor3search-typescript stop -tag <tag>     # ask the agent to stop after its current experiment
+npx autor3search-typescript stop -tag <tag> -force   # also signal the running eval to abandon it now
+npx autor3search-typescript stop -tag <tag> -clear   # cancel a pending stop
 ```
 
 `stop` never drops a commit for you — it only asks, or signals, and then prints the `git reset --hard HEAD~1` that would drop the abandoned experiment, for you to run yourself.
@@ -70,7 +70,7 @@ npx autoresearch-typescript stop -tag <tag> -clear   # cancel a pending stop
 
 | command | what it does |
 |---|---|
-| `init` | Discover benchmarks and write `.autoresearch/config.yaml` and `program.md` |
+| `init` | Discover benchmarks and write `.autor3search/config.yaml` and `program.md` |
 | `doctor` | Report whether this machine can measure reliably (informational, always exits 0) |
 | `baseline` | Freeze tests/benchmarks, pin a worktree at HEAD, install and prove it can measure |
 | `eval` | Run one experiment through the gate chain and report a verdict (0 KEEP, 1 DISCARD, 2 FAIL, 3 CRASH) |
@@ -83,7 +83,7 @@ Every command accepts a leading `-C <dir>` to run as if invoked from `<dir>` (it
 
 ## Where run state lives
 
-Everything the verdict depends on — the frozen manifest, the baseline record, the eval lock, stop requests — lives under the OS cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), keyed by the repository's own canonical path and the `-tag` you chose, never inside the repository itself. `results.tsv` and `run.log` also live in the repository but are gitignored and untracked — plain, human-readable output, not gated artifacts. `.autoresearch/config.yaml` is the one exception: `init` writes `.autoresearch/*` to `.gitignore` with a `!.autoresearch/config.yaml` negation, so the run configuration itself is committed to version history (a KEEP has to stay reproducible and auditable later), while only its hash — not its content — is what the gate chain actually trusts; a hand-edit to it fails the next `eval` rather than silently loosening it.
+Everything the verdict depends on — the frozen manifest, the baseline record, the eval lock, stop requests — lives under the OS cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), keyed by the repository's own canonical path and the `-tag` you chose, never inside the repository itself. `results.tsv` and `run.log` also live in the repository but are gitignored and untracked — plain, human-readable output, not gated artifacts. `.autor3search/config.yaml` is the one exception: `init` writes `.autor3search/*` to `.gitignore` with a `!.autor3search/config.yaml` negation, so the run configuration itself is committed to version history (a KEEP has to stay reproducible and auditable later), while only its hash — not its content — is what the gate chain actually trusts; a hand-edit to it fails the next `eval` rather than silently loosening it.
 
 ## The worked example
 
@@ -99,7 +99,7 @@ chars.push(c)                // O(1) amortized per character: O(n) per word
 
 This is deliberately **not** a string-concatenation fix. Plain `+=` on a JS string is not the bug here — V8 represents concatenated strings as ropes, so it never re-copies on every append the way Go's naked string concatenation does. The bug is expressed with an array instead, because that is what actually costs O(n²) in this runtime.
 
-Running `autoresearch-typescript eval --json` against that one commit, on the machine this project was built on:
+Running `autor3search-typescript eval --json` against that one commit, on the machine this project was built on:
 
 | | value |
 |---|---|
@@ -119,7 +119,7 @@ The same live session then correctly **DISCARDed** a genuine no-op commit (a com
 | edit `package.json`, a lockfile, or `tsconfig.json` | FAIL, unconditionally — immutable regardless of `scope` |
 | edit a file outside `scope` | FAIL — scope violation |
 | edit a frozen test/spec/bench file to make it pass trivially | the real, original content is restored before the test ever runs; a `WARNING:` line reports what was restored |
-| edit `.autoresearch/config.yaml` (e.g. loosen `min_effect_pct`) | FAIL — the config hash no longer matches the baseline's |
+| edit `.autor3search/config.yaml` (e.g. loosen `min_effect_pct`) | FAIL — the config hash no longer matches the baseline's |
 | add a new, easier benchmark not present at baseline | FAIL — unmanifested file |
 | commit source AND a slowed-down benchmark body together, hoping the slow body inflates its own future baseline | after a KEEP, the base worktree is repointed to the candidate commit and then the frozen benchmark bytes are immediately restored over it — so the tampered bench body never survives into the new baseline; every future comparison still measures the same original frozen bytes on both sides |
 | let its own change fail the repo's typecheck, build, or test command | FAIL, before anything is measured |

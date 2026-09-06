@@ -8,7 +8,7 @@
  *
  *  1. scope             -- every changed file is in `config.scope` (or immutable
  *                           -> unconditional reject regardless of scope)
- *  2. config integrity   -- `.autoresearch/config.yaml` hashes to what baseline
+ *  2. config integrity   -- `.autor3search/config.yaml` hashes to what baseline
  *                           recorded; the agent cannot loosen its own rules
  *  3. restore            -- frozen tests/benchmarks are put back exactly as they
  *                           were at baseline, whether or not they were "in scope"

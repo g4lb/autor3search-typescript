@@ -36,12 +36,12 @@ export const COMMANDS: Record<string, Command> = {
   profile: cmdProfile,
 }
 
-const HELP = `autoresearch-typescript -- autonomous performance optimization for a TypeScript repository
+const HELP = `autor3search-typescript -- autonomous performance optimization for a TypeScript repository
 
-Usage: autoresearch-typescript [-C <dir>] <command> [flags]
+Usage: autor3search-typescript [-C <dir>] <command> [flags]
 
 Commands:
-  init      Discover benchmarks and write .autoresearch/config.yaml and program.md
+  init      Discover benchmarks and write .autor3search/config.yaml and program.md
   doctor    Report whether this machine can measure reliably (informational, always exits 0)
   baseline  Freeze tests/benchmarks, pin a worktree at HEAD, install and prove it can measure
   eval      Run one experiment through the gate chain and report a verdict (0 KEEP, 1 DISCARD, 2 FAIL, 3 CRASH)

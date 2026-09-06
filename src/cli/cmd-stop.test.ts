@@ -82,7 +82,7 @@ async function setup(patches: Record<string, string> = {}): Promise<{ root: stri
   try {
     expect(await cmdInit(ctx, [])).toBe(0)
     if (Object.keys(patches).length > 0) await patchConfig(ctx, patches)
-    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+    await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
     await git(root, ['commit', '-q', '-m', 'init'])
     expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
   } finally {
@@ -173,7 +173,7 @@ describe('cmdStop', () => {
 
   it('infers -tag from the current run branch when -tag is omitted', async () => {
     const { ctx } = await setup()
-    // baseline leaves the repo checked out on "autoresearch-typescript/sep6";
+    // baseline leaves the repo checked out on "autor3search-typescript/sep6";
     // every other test in this file passes -tag explicitly, so this is the
     // only coverage of inferTagFromBranch actually running end to end.
     captureOutput()
@@ -188,7 +188,7 @@ describe('cmdStop', () => {
     const { root, ctx } = await setup()
     const dir = runDir(root, TAG)
     const head = await headCommit(root)
-    const branch = 'autoresearch-typescript/sep6'
+    const branch = 'autor3search-typescript/sep6'
     captureOutput()
 
     const code = await cmdStop(ctx, ['-tag', TAG, '-force'])

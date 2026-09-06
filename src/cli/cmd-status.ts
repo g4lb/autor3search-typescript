@@ -110,7 +110,7 @@ export async function cmdStatus(ctx: RunCtx, argv: readonly string[]): Promise<n
   const summary = summarize(rows)
 
   const lines: string[] = []
-  lines.push(`autoresearch-typescript status -- tag ${JSON.stringify(resolvedTag)}`)
+  lines.push(`autor3search-typescript status -- tag ${JSON.stringify(resolvedTag)}`)
   lines.push(`  run branch:      ${runBranch}`)
   lines.push(
     `  current branch:  ${branch ?? 'unknown'}` + (branch === runBranch ? '' : '  (not on the run branch)'),

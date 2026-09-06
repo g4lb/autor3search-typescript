@@ -71,7 +71,7 @@ async function setup(patches: Record<string, string> = {}): Promise<{ root: stri
   try {
     expect(await cmdInit(ctx, [])).toBe(0)
     if (Object.keys(patches).length > 0) await patchConfig(ctx, patches)
-    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+    await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
     await git(root, ['commit', '-q', '-m', 'init'])
     expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
   } finally {
@@ -123,7 +123,7 @@ describe('cmdEval', () => {
     captureOutput()
 
     // No -tag given at all -- the current branch, checked out by baseline
-    // itself, is "autoresearch-typescript/sep6".
+    // itself, is "autor3search-typescript/sep6".
     const code = await cmdEval(ctx, ['--json'])
 
     expect([0, 1]).toContain(code) // a real, unmodified experiment: keep or discard, never fail/crash
@@ -244,7 +244,7 @@ describe('cmdEval', () => {
 
       expect(await cmdInit(ctx, [])).toBe(0)
       await patchConfig(ctx, FAST_MEASURE_PATCHES)
-      await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+      await git(root, ['add', '.autor3search/config.yaml', 'program.md', '.gitignore'])
       await git(root, ['commit', '-q', '-m', 'init'])
       expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
       await trivialCommit(root)

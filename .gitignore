@@ -1,6 +1,6 @@
 node_modules/
 dist/
-.autoresearch/
+.autor3search/
 results.tsv
 run.log
 *.cpuprofile

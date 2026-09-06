@@ -19,16 +19,16 @@ Repeat this loop until a verdict reports `"stop_requested": true`:
 
 1. Read one benchmark and understand what it measures.
 2. Form ONE hypothesis for a change that should make it faster.
-3. Edit ONLY files matched by `scope` in `.autoresearch/config.yaml`.
+3. Edit ONLY files matched by `scope` in `.autor3search/config.yaml`.
 4. Commit the change. One experiment, one commit — never more than one
    experiment per commit.
-5. Run `autoresearch-typescript eval --json` and apply the verdict below.
+5. Run `autor3search-typescript eval --json` and apply the verdict below.
 
 Before starting each experiment, print this line with the real values
 filled in:
 
 ```
-[exp <n> | {{RUN_TAG}} | vs <measure_commit> | stop: autoresearch-typescript stop]
+[exp <n> | {{RUN_TAG}} | vs <measure_commit> | stop: autor3search-typescript stop]
 ```
 
 `<n>` is this experiment's number in this run. `<measure_commit>` is the
@@ -53,14 +53,14 @@ the branch. Discard it and move on.
 ## What you must never do
 
 - Never edit `program.md` (this file).
-- Never edit `.autoresearch/config.yaml`.
+- Never edit `.autor3search/config.yaml`.
 - Never edit `results.tsv`.
 - Never edit any `*.test.ts`, `*.spec.ts`, or `*.bench.ts` file.
 - Never edit `package.json`.
 - Never edit any lockfile (`package-lock.json`, `pnpm-lock.yaml`,
   `yarn.lock`, `bun.lockb`, `bun.lock`).
 - Never edit `tsconfig.json`.
-- Never pass `-force` to any `autoresearch-typescript` command.
+- Never pass `-force` to any `autor3search-typescript` command.
 - Never run more than one experiment per commit.
 
 Every one of these is enforced by a gate, not just a request: `eval` will
@@ -75,7 +75,7 @@ When an `eval --json` result reports `"stop_requested": true`:
    commit, or discard it) — a pending stop does not change how this
    experiment is judged.
 2. Do not start another experiment.
-3. Run `autoresearch-typescript report`.
+3. Run `autor3search-typescript report`.
 4. Summarize, in your own words, what you tried, what was kept, and the
    cumulative speedup reported. Then exit.
 

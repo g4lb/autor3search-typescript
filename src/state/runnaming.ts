@@ -16,7 +16,7 @@ import { currentBranch } from '../gitx/git.js'
  */
 
 /** Prefix `baseline` uses for the run branch it creates: `<prefix><tag>`. */
-export const BRANCH_PREFIX = 'autoresearch-typescript/'
+export const BRANCH_PREFIX = 'autor3search-typescript/'
 
 /** Directory name, under the per-run state dir, of the pinned baseline worktree. */
 export const WORKTREE_DIRNAME = 'baseline-worktree'

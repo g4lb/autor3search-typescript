@@ -17,8 +17,14 @@
  *  5. typecheck          -- `config.typecheckCommand`, skipped when empty
  *  6. build              -- `config.buildCommand`, skipped when empty
  *  7. test               -- `config.testCommand` (never empty)
- *  8. worktree integrity -- the pinned baseline worktree still exists, is at
- *                           `baseline.measureCommit`, and its lockfile is untouched
+ *  8. worktree integrity -- the candidate's own working tree is clean and HEAD
+ *                           has moved past `baseline.measureCommit` (measuring
+ *                           an uncommitted edit and crediting it to a commit
+ *                           that never contained it would let one uncommitted
+ *                           optimization be scored forever); the pinned
+ *                           baseline worktree still exists, is at
+ *                           `baseline.measureCommit`, and its lockfile is
+ *                           untouched
  *  9. measure            -- interleaved benchmark measurement, base vs. candidate
  * 10. score              -- `compareAll` + `decide`
  * 11. on KEEP             -- advance `measureCommit` (never `frozenCommit`)
@@ -36,7 +42,7 @@ import type { Benchmark } from '../discover/benchmarks.js'
 import { freezableFiles } from '../discover/files.js'
 import { findUnmanifested, restore } from '../freeze/freeze.js'
 import { hashString } from '../freeze/manifest.js'
-import { changedFiles, headCommit, repointWorktree } from '../gitx/git.js'
+import { changedFiles, headCommit, isClean, repointWorktree } from '../gitx/git.js'
 import { interleave, type Observations } from '../measure/interleave.js'
 import { appendRow, loadRows, type Row } from '../results/results.js'
 import { checkScope } from '../scope/scope.js'
@@ -308,6 +314,21 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
     )
   }
 
+  // Captured HERE, before gate 3 ever touches the working tree: gate 3's own
+  // restore intentionally leaves tracked frozen files differing from HEAD
+  // (that is the whole point -- the measured content must be the frozen
+  // bytes, not whatever the agent committed), which makes `git status` dirty
+  // on its own. Checking cleanliness after that would misreport every
+  // legitimate restore as an uncommitted-change violation. What gate 8 must
+  // police is whether the AGENT's own commit left the tree clean, which is
+  // exactly what this snapshot -- taken before any harness mutation -- answers.
+  let treeWasCleanBeforeRestore = true
+  try {
+    treeWasCleanBeforeRestore = await isClean(opts.ctx.repoRoot)
+  } catch (e) {
+    return finish(noVerdict('crash'), [], 'worktree-integrity', `could not check working tree cleanliness: ${messageOf(e)}`)
+  }
+
   // --- Gate 3: restore. Frozen files are put back exactly as they were,
   // whether or not the agent's edit to them was "in scope" -- a test file
   // edit is legal to make, but its content is not legal to keep. A failure
@@ -387,6 +408,35 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   }
 
   // --- Gate 8: worktree integrity.
+  //
+  // The candidate is measured from `opts.ctx.repoRoot` -- the live working
+  // tree, not a checkout of `candidateCommit` -- so nothing upstream of this
+  // gate stops an agent from applying a real optimization and never
+  // committing it: the working tree keeps the win, `candidateCommit` (and
+  // `measureCommit` after a KEEP) stays wherever HEAD already was, and the
+  // same uncommitted edit can be measured and credited indefinitely. Both
+  // checks below are FAIL, not CRASH: they describe the agent's own change
+  // (or lack of one), not a harness malfunction.
+  if (!treeWasCleanBeforeRestore) {
+    return finish(
+      noVerdict('fail'),
+      [],
+      'worktree-integrity',
+      'the working tree is not clean (uncommitted changes or untracked files): the candidate is ' +
+        'measured from this working tree, and crediting an uncommitted edit to a commit that never ' +
+        'contained it would let the same edit be measured and kept forever without ever landing. ' +
+        'Commit your change, then run eval.',
+    )
+  }
+  if (candidateCommit === baseline.measureCommit) {
+    return finish(
+      noVerdict('fail'),
+      [],
+      'worktree-integrity',
+      `HEAD (${candidateCommit}) is the same commit already recorded as measureCommit: there is ` +
+        'nothing new to evaluate. Commit your change, then run eval.',
+    )
+  }
   const worktreeProblem = await checkWorktreeIntegrity(worktreeDir, baseline)
   if (worktreeProblem !== null) {
     return finish(noVerdict('fail'), [], 'worktree-integrity', worktreeProblem)

@@ -26,6 +26,20 @@ async function git(cwd: string, args: string[]): Promise<void> {
   if (!ok(r)) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
 }
 
+/**
+ * Advances HEAD past `baseline.measureCommit` with a trivial, in-scope,
+ * non-frozen edit -- gate 8 now refuses to evaluate a commit that is still
+ * the one already recorded as measured, so any test exercising a real
+ * measurement needs one real commit past baseline first.
+ */
+async function trivialCommit(root: string): Promise<void> {
+  const file = path.join(root, 'src', 'wordcount.ts')
+  const text = await readFile(file, 'utf8')
+  await writeFile(file, `${text}\n// trivial, in-scope, non-functional edit\n`, 'utf8')
+  await git(root, ['add', 'src/wordcount.ts'])
+  await git(root, ['commit', '-q', '-m', 'chore: trivial commit to advance HEAD past measureCommit'])
+}
+
 async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promise<void> {
   let text = await readFile(ctx.configPath, 'utf8')
   for (const [key, value] of Object.entries(patches)) {
@@ -104,7 +118,8 @@ afterEach(async () => {
 
 describe('cmdEval', () => {
   it('defaults -tag to the tag inferred from the current run branch', async () => {
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
     captureOutput()
 
     // No -tag given at all -- the current branch, checked out by baseline
@@ -144,7 +159,8 @@ describe('cmdEval', () => {
   })
 
   it('the JSON object carries all the documented fields with the right shapes', async () => {
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
     captureOutput()
 
     const code = await cmdEval(ctx, ['-tag', TAG, '--json', '-desc', 'a test experiment'])
@@ -232,6 +248,7 @@ describe('cmdEval', () => {
       await git(root, ['add', 'program.md', '.gitignore'])
       await git(root, ['commit', '-q', '-m', 'init'])
       expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
+      await trivialCommit(root)
     } finally {
       outSpy.mockRestore()
       errSpy.mockRestore()
@@ -249,7 +266,8 @@ describe('cmdEval', () => {
   })
 
   it('records -desc on the results.tsv row', async () => {
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
     captureOutput()
 
     await cmdEval(ctx, ['-tag', TAG, '-desc', 'a memorable description'])

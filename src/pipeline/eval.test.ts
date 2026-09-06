@@ -60,6 +60,21 @@ async function addAndCommit(root: string, rel: string, body: string, message: st
   await git(root, ['commit', '-q', '-m', message])
 }
 
+/**
+ * Advances HEAD past `baseline.measureCommit` with a trivial, in-scope,
+ * non-frozen edit and leaves the tree clean -- gate 8's clean-tree and
+ * commit-has-moved checks (see `pipeline/eval.ts`) reject any `runEval` call
+ * that has not done this, so every test below that exercises a LATER gate
+ * (or a successful run) needs a real commit to get there.
+ */
+async function trivialCommit(root: string): Promise<void> {
+  const file = path.join(root, 'src', 'wordcount.ts')
+  const text = await readFile(file, 'utf8')
+  await writeFile(file, `${text}\n// trivial, in-scope, non-functional edit\n`, 'utf8')
+  await git(root, ['add', 'src/wordcount.ts'])
+  await git(root, ['commit', '-q', '-m', 'chore: trivial commit to advance HEAD past measureCommit'])
+}
+
 const TAG = 'sep6'
 
 /** Fresh demo repo, initialized (with config patches applied before commit) and baselined. */
@@ -138,7 +153,8 @@ describe('runEval: gate order', () => {
   // negative assertions vacuously true. This proves measureOne genuinely
   // gets invoked on the one path where nothing should stop it.
   it('positive control: measureOne IS called when no gate rejects', async () => {
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
     const spy = vi.fn(constMeasureOne)
 
     await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
@@ -302,7 +318,8 @@ describe('runEval: gate order', () => {
     // The demo fixture ships with no tsconfig.json, so cmd-init generates an
     // empty typecheck_command -- exactly the case this gate must not treat
     // as a failure.
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
 
     const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: constMeasureOne })
 
@@ -324,7 +341,8 @@ describe('runEval: gate order', () => {
   it('gate 6: an empty build command SKIPS the gate rather than failing it', async () => {
     // The demo fixture's package.json has no "build" script, so cmd-init
     // generates an empty build_command.
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
 
     const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: constMeasureOne })
 
@@ -345,6 +363,7 @@ describe('runEval: gate order', () => {
 
   it('gate 8: FAILs when the worktree lockfile hash no longer matches', async () => {
     const { root, ctx } = await setup()
+    await trivialCommit(root)
     const dir = runDir(root, TAG)
     const worktreeLockfile = path.join(dir, 'baseline-worktree', 'package-lock.json')
     await writeFile(worktreeLockfile, '{"tampered": true}\n', 'utf8')
@@ -357,12 +376,79 @@ describe('runEval: gate order', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
+  // The Critical fix from the final whole-branch review: `eval` measures
+  // `opts.ctx.repoRoot` -- the live working tree -- while crediting whatever
+  // `headCommit` reports. Left unchecked, an agent can apply a real
+  // optimization, never commit it, and have that same uncommitted edit
+  // measured and KEPT indefinitely, since neither the working tree's
+  // cleanliness nor HEAD's position is required to change between runs. See
+  // the mutation evidence in final-fix-report.md: with this check removed,
+  // this exact scenario reports KEEP.
+  it('gate 8: FAILs on an uncommitted, in-scope edit -- an agent must commit before eval can measure it', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    // HEAD is advanced past baseline.measureCommit FIRST (a real, harmless
+    // commit), so the "HEAD has not moved" check (below) cannot be what
+    // rejects this experiment -- only the clean-tree check can. Without this
+    // first commit, an uncommitted edit made straight after baseline is
+    // indistinguishable from "HEAD never moved," and would not isolate which
+    // of the two checks is doing the rejecting.
+    await trivialCommit(root)
+    // A real improvement, deliberately left UNCOMMITTED on top of that.
+    const file = path.join(root, 'src', 'wordcount.ts')
+    const text = await readFile(file, 'utf8')
+    const fixed = text.replace('chars = chars.concat([c])', 'chars.push(c)')
+    expect(fixed).not.toBe(text)
+    await writeFile(file, fixed, 'utf8')
+    // A one-sided stand-in (candidate always faster) rather than an empty
+    // `vi.fn()` or a constant one: if this check is ever removed, the
+    // pipeline must run a genuine measurement through to a real KEEP, not
+    // merely avoid crashing -- see the mutation evidence in
+    // final-fix-report.md.
+    const worktreeDir = path.join(runDir(root, TAG), 'baseline-worktree')
+    const sidedMeasureOne = vi.fn(async (dir: string): Promise<number> => (dir === worktreeDir ? 1000 : 10))
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: sidedMeasureOne })
+
+    expect(outcome.verdict.status).toBe('fail')
+    expect(outcome.failedGate).toBe('worktree-integrity')
+    expect(outcome.message).toMatch(/not clean/)
+    expect(outcome.message).toMatch(/commit your change/i)
+    expect(sidedMeasureOne).not.toHaveBeenCalled()
+    // No row beyond the fail itself: this is the only experiment recorded.
+    const rows = await loadRows(ctx.resultsPath)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.status).toBe('fail')
+  })
+
+  it('gate 8: FAILs when HEAD has not moved past the already-recorded measureCommit', async () => {
+    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    // No commit made since baseline: candidateCommit === baseline.measureCommit.
+    const spy = vi.fn()
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(outcome.verdict.status).toBe('fail')
+    expect(outcome.failedGate).toBe('worktree-integrity')
+    expect(outcome.message).toMatch(/nothing new to evaluate/)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('gate 8: the normal committed path still KEEPs a real, committed optimization', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await applyRealFix(root)
+
+    const outcome = await runEval({ ctx, tag: TAG, description: 'push instead of concat' })
+
+    expect(outcome.verdict.status).toBe('keep')
+  })
+
   // A wrong implementation that maps a measurement-child failure to
   // noVerdict('fail') instead of noVerdict('crash') would pass every other
   // test in this file -- this is the only one that actually drives a
   // measurement failure and checks which status it produces.
   it('gate 9: any ok:false from a measurement child is CRASH, not FAIL', async () => {
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
 
     const outcome = await runEval({
       ctx,

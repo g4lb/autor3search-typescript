@@ -60,6 +60,20 @@ const FAST_MEASURE_PATCHES: Record<string, string> = {
   warmup: JSON.stringify('0ms'),
 }
 
+/**
+ * Advances HEAD past `baseline.measureCommit` with a trivial, in-scope,
+ * non-frozen edit -- gate 8 refuses to evaluate a commit that is still the
+ * one already recorded as measured, so any test driving a real measurement
+ * needs one real commit past baseline first.
+ */
+async function trivialCommit(root: string): Promise<void> {
+  const file = path.join(root, 'src', 'wordcount.ts')
+  const text = await readFile(file, 'utf8')
+  await writeFile(file, `${text}\n// trivial, in-scope, non-functional edit\n`, 'utf8')
+  await git(root, ['add', 'src/wordcount.ts'])
+  await git(root, ['commit', '-q', '-m', 'chore: trivial commit to advance HEAD past measureCommit'])
+}
+
 async function setup(patches: Record<string, string> = {}): Promise<{ root: string; ctx: RunCtx }> {
   const root = await makeDemoRepo()
   const ctx = ctxFor(root)
@@ -115,7 +129,8 @@ afterEach(async () => {
 
 describe('cmdStop', () => {
   it('writes a request that eval reports as stop_requested', async () => {
-    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    await trivialCommit(root)
     captureOutput()
     expect(await cmdStop(ctx, ['-tag', TAG])).toBe(0)
     expect(stdout.join('')).toMatch(/stop requested for tag "sep6"/)

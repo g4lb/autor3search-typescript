@@ -44,13 +44,24 @@ export function stateHome(env: NodeJS.ProcessEnv = process.env): string {
  * directory. `realpath` requires the path to exist; when it doesn't (as in
  * tests that key against a repo root that was never created on disk) we fall
  * back to the syntactic resolution rather than failing.
+ *
+ * The fallback is ONLY for ENOENT. Any other realpath failure (EACCES on a
+ * symlinked ancestor, ELOOP, ESTALE, ...) must propagate rather than silently
+ * fall back to the syntactic path: `baseline` might run as the repo's owner
+ * and key on the true canonical path, while `eval` later runs under a
+ * different uid or a sandbox with restricted traversal on that same ancestor,
+ * hits EACCES, and -- if we swallowed it -- would fall back to a differently-
+ * hashed syntactic path and report "no baseline" for a run that exists. That
+ * is the exact same stranded-state failure the canonicalization exists to
+ * prevent, reintroduced through its own fallback.
  */
 function canonicalRepoPath(repoRoot: string): string {
   const abs = path.resolve(repoRoot)
   try {
     return realpathSync(abs)
-  } catch {
-    return abs
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return abs
+    throw err
   }
 }
 

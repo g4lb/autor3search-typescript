@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, symlink } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -61,5 +61,23 @@ describe('runDir', () => {
     const viaSymlink = path.join(linkedParent, 'real')
 
     expect(runDir(viaSymlink, 'sep6', env)).toBe(runDir(real, 'sep6', env))
+  })
+
+  it('propagates a real traversal failure instead of silently falling back to a differently-keyed path', async () => {
+    const env = { [STATE_HOME_ENV]: '/s' }
+    const base = await mkdtemp(path.join(tmpdir(), 'ars-state-home-'))
+    const blocked = path.join(base, 'blocked')
+    const sub = path.join(blocked, 'sub')
+    await mkdir(sub, { recursive: true })
+    await chmod(blocked, 0o000)
+    try {
+      // realpath cannot traverse `blocked` (EACCES), which is a different
+      // fact than "this path doesn't exist". Falling back to the syntactic
+      // path here would key this call differently from a call made when
+      // `blocked` was still traversable, silently stranding a run's state.
+      expect(() => runDir(sub, 'sep6', env)).toThrow()
+    } finally {
+      await chmod(blocked, 0o700)
+    }
   })
 })

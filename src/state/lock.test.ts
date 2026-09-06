@@ -48,6 +48,33 @@ describe('acquireEvalLock', () => {
     expect(await readEvalLock(dir)).toBeNull()
   })
 
+  it('does NOT reclaim a present lock it fails to read (e.g. permission denied)', async () => {
+    const dir = await tmp()
+    const { writeFile, mkdir, chmod } = await import('node:fs/promises')
+    await mkdir(dir, { recursive: true })
+    const file = lockPath(dir)
+    await writeFile(
+      file,
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+      { flag: 'wx' },
+    )
+    await chmod(file, 0o000)
+    try {
+      // "Could not read" must never be treated as "safe to steal" -- unlike
+      // the stale-pid case, this must reject rather than silently taking the
+      // lock over, and readEvalLock itself must surface the failure rather
+      // than reporting null (which would look identical to "no lock").
+      await expect(readEvalLock(dir)).rejects.toThrow()
+      await expect(acquireEvalLock(dir)).rejects.toThrow()
+    } finally {
+      await chmod(file, 0o600)
+    }
+    // The lock file must still be exactly as it was: never deleted, and
+    // still naming the original (live, this-process) holder.
+    const held = JSON.parse(await readFile(file, 'utf8')) as { pid: number }
+    expect(held.pid).toBe(process.pid)
+  })
+
   it('release makes the lock file disappear on disk', async () => {
     const dir = await tmp()
     const release = await acquireEvalLock(dir)

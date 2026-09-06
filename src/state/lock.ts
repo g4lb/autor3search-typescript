@@ -27,15 +27,23 @@ export async function readEvalLock(dir: string): Promise<{ pid: number } | null>
   let text: string
   try {
     text = await readFile(lockPath(dir), 'utf8')
-  } catch {
-    return null
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    // Any other read failure (EACCES, a different uid owns the file, a
+    // transient I/O error, ...) does NOT mean the lock is absent -- it means
+    // we could not check. Collapsing that into "absent" is how a genuinely
+    // held, live lock gets stolen out from under its owner. Propagate it so
+    // the caller never treats "couldn't read" as "safe to reclaim".
+    throw err
   }
   try {
     const parsed = JSON.parse(text) as EvalLockFile
     return { pid: parsed.pid }
   } catch {
-    // A corrupt or half-written lock file is treated the same as absent so
-    // that it can be reclaimed rather than wedging every future eval.
+    // The read itself succeeded; the content is corrupt or half-written
+    // (e.g. a crash mid-write). That is genuinely indistinguishable from
+    // absent, so it is treated as reclaimable rather than wedging every
+    // future eval.
     return null
   }
 }
@@ -57,6 +65,10 @@ export async function acquireEvalLock(dir: string): Promise<() => Promise<void>>
       break
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      // readEvalLock throws on anything other than "confirmed absent" or
+      // "confirmed corrupt" (see its doc comment); that throw propagates out
+      // of this function untouched, so a lock we failed to read is never
+      // reclaimed here.
       const existing = await readEvalLock(dir)
       if (existing !== null && isAlive(existing.pid)) {
         throw new Error(
@@ -64,7 +76,11 @@ export async function acquireEvalLock(dir: string): Promise<() => Promise<void>>
             '"stop" to request it stop',
         )
       }
-      // Stale (dead pid) or unreadable: reclaim and retry the exclusive create.
+      // existing is null here only because the file was confirmed absent (a
+      // race: it existed for writeFile's wx check but was gone by the time we
+      // read it) or its content was corrupt/half-written. Either way it is
+      // safe to reclaim. A dead-pid lock falls through the isAlive check
+      // above instead.
       await rm(file, { force: true })
     }
   }

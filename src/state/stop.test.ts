@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -41,5 +41,20 @@ describe('requestStop / readStop / clearStop', () => {
     // racing a writer that has not finished flushing yet.
     await writeFile(stopPath(dir), '{"requestedAt": "2026-09-06T00:00', 'utf8')
     await expect(readStop(dir)).resolves.toBeNull()
+  })
+
+  it('surfaces a real read failure instead of reporting "no stop requested"', async () => {
+    const dir = await tmp()
+    await requestStop(dir, true)
+    const file = stopPath(dir)
+    await chmod(file, 0o000)
+    try {
+      // A user ran `stop`; the request exists but this reader can't see it.
+      // Silently returning null here would mean stop appears to do nothing,
+      // with no error and no log -- indistinguishable from no request at all.
+      await expect(readStop(dir)).rejects.toThrow()
+    } finally {
+      await chmod(file, 0o600)
+    }
   })
 })

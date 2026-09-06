@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -48,11 +48,20 @@ describe('writeBaseline / readBaseline', () => {
     )
   })
 
-  it('does not clobber a previous baseline with a half-written file on repeated writes', async () => {
+  it('a second write overwrites the first, and leaves no temp file behind', async () => {
+    // This does NOT prove crash-atomicity -- a unit test cannot kill the
+    // process mid-write to observe that. Atomicity itself rests on `rename`
+    // being atomic within a filesystem, which is a property of the OS, not
+    // something exercisable here. What this test pins down is the two things
+    // that ARE observable: a later write wins over an earlier one, and the
+    // write-to-temp-then-rename mechanism doesn't litter the directory with
+    // its intermediate file once it succeeds.
     const dir = await tmp()
     await writeBaseline(dir, record({ measureCommit: 'aaaaaaa' }))
     await writeBaseline(dir, record({ measureCommit: 'ccccccc' }))
     const read = await readBaseline(dir)
     expect(read.measureCommit).toBe('ccccccc')
+    const entries = await readdir(dir)
+    expect(entries).toEqual(['baseline.json'])
   })
 })

@@ -81,4 +81,53 @@ describe('discoverBenchmarks', () => {
     const found = await discoverBenchmarks(root)
     expect(found.map((b) => b.fn)).toEqual(['benchMine'])
   })
+
+  it('excludes a function named exactly "bench" (no suffix)', async () => {
+    const root = await repoWith({
+      'src/p.bench.ts': 'export function bench() {}',
+    })
+    const found = await discoverBenchmarks(root)
+    expect(found).toEqual([])
+  })
+
+  it('excludes a default-exported bench function, since the child imports by name', async () => {
+    const root = await repoWith({
+      'src/p.bench.ts': 'export default function benchX() { return 1 }',
+    })
+    const found = await discoverBenchmarks(root)
+    expect(found).toEqual([])
+  })
+
+  it('resolves a plain export list by the exported name', async () => {
+    const root = await repoWith({
+      'src/p.bench.ts': `
+        function benchParse() { return 1 }
+        export { benchParse }
+      `,
+    })
+    const found = await discoverBenchmarks(root)
+    expect(found.map((b) => b.fn)).toEqual(['benchParse'])
+  })
+
+  it('honours aliasing into a bench name in an export list', async () => {
+    const root = await repoWith({
+      'src/p.bench.ts': `
+        function internalHelper() { return 1 }
+        export { internalHelper as benchParse }
+      `,
+    })
+    const found = await discoverBenchmarks(root)
+    expect(found.map((b) => b.fn)).toEqual(['benchParse'])
+  })
+
+  it('honours aliasing out of a bench name in an export list', async () => {
+    const root = await repoWith({
+      'src/p.bench.ts': `
+        function benchParse() { return 1 }
+        export { benchParse as somethingElse }
+      `,
+    })
+    const found = await discoverBenchmarks(root)
+    expect(found).toEqual([])
+  })
 })

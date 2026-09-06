@@ -16,11 +16,11 @@
   },
   "dependencies": {
     "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
     "vitest": "^5.0.0"
   }
 }

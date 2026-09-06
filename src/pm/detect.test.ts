@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { detect } from './detect.js'
+import { assertSinglePackage, detect } from './detect.js'
 
 async function repo(files: Record<string, string>): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'ars-pm-'))
@@ -96,5 +96,22 @@ describe('detect', () => {
       'package-lock.json': '{}',
     })
     await expect(detect(root)).rejects.toThrow(/workspace|monorepo/i)
+  })
+
+  it('refuses a package.json that is not valid JSON', async () => {
+    const root = await repo({ 'package.json': '{ not json', 'package-lock.json': '{}' })
+    await expect(detect(root)).rejects.toThrow(/not valid JSON/)
+  })
+})
+
+describe('assertSinglePackage', () => {
+  it('resolves for a plain single-package package.json', async () => {
+    const root = await repo({ 'package.json': PKG })
+    await expect(assertSinglePackage(PKG, root)).resolves.toBeUndefined()
+  })
+
+  it('rejects package.json that is not valid JSON', async () => {
+    const root = await repo({})
+    await expect(assertSinglePackage('{ not json', root)).rejects.toThrow(/not valid JSON/)
   })
 })

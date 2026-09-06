@@ -34,30 +34,50 @@ export async function isClean(root: string): Promise<boolean> {
   return (await git(root, ['status', '--porcelain'])) === ''
 }
 
-/**
- * Repo-relative POSIX paths changed between `sinceRef` and the working tree.
- *
- * Deliberately `diff <ref>` (ref vs. working tree), not `diff <ref> HEAD`
- * (ref vs. last commit): the scope gate must see uncommitted edits too, and
- * this form also reports files the agent deleted. It does NOT report a new
- * untracked file the agent added — `git diff` only ever compares against
- * what git already knows about, so a file added outside `scope` and never
- * `git add`-ed would evade a gate built only on this function. Callers that
- * need to catch new files must combine this with an untracked-files check.
- */
-export async function changedFiles(root: string, sinceRef: string): Promise<string[]> {
-  // -z guards against paths containing spaces or newlines: with the default
-  // newline-separated, C-quoted output, a filename that itself contains a
-  // newline (or a space, under certain diff options) can be misparsed into
-  // extra entries. A scope gate that mis-parses a filename is a scope gate
-  // that can be bypassed by naming a file carefully, so this is a security
-  // property, not formatting.
-  const out = await git(root, ['diff', '--name-only', '-z', sinceRef])
+/** Splits a NUL-separated `-z` git listing into repo-relative POSIX paths. */
+function parseNulList(out: string): string[] {
   return out
     .split('\0')
     .filter((s) => s !== '')
     .map((s) => s.split(path.sep).join('/'))
-    .sort()
+}
+
+/**
+ * Repo-relative POSIX paths touched since `sinceRef`: everything the scope
+ * gate must treat as "changed by the agent," whether or not it was ever
+ * `git add`-ed.
+ *
+ * This is the union of two git views, because neither alone answers the
+ * question:
+ *
+ * - `diff --name-only <ref>` (ref vs. the *working tree*, not `HEAD`) — this
+ *   catches committed changes, uncommitted edits to tracked files, and
+ *   files the agent deleted. It does NOT catch a brand-new file the agent
+ *   creates and never stages: `git diff` only ever compares paths git
+ *   already knows about, so a new file outside `scope` that is never
+ *   `git add`-ed would silently evade a gate built on `diff` alone — a real
+ *   scope-gate bypass, not a hypothetical one.
+ * - `ls-files --others --exclude-standard` — lists untracked files, closing
+ *   that gap. `--exclude-standard` is load-bearing, not decoration: without
+ *   it, the harness's own gitignored outputs (`results.tsv`, `run.log`,
+ *   `.autoresearch/`, `node_modules/`) would appear as changes outside
+ *   `scope` and fail every eval. Once a new file is committed, `diff` picks
+ *   it up as an addition and `ls-files --others` naturally stops listing it
+ *   (it is no longer "other"), so the union never double-reports a file
+ *   across a commit boundary.
+ *
+ * Both commands use `-z`: a path with a space or embedded newline would
+ * otherwise be able to split into extra entries under the default
+ * newline-separated, C-quoted output, and a scope gate that mis-parses a
+ * filename is one an agent can bypass by naming a file carefully. This is a
+ * security property, not formatting.
+ */
+export async function changedFiles(root: string, sinceRef: string): Promise<string[]> {
+  const [diffOut, untrackedOut] = await Promise.all([
+    git(root, ['diff', '--name-only', '-z', sinceRef]),
+    git(root, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ])
+  return [...new Set([...parseNulList(diffOut), ...parseNulList(untrackedOut)])].sort()
 }
 
 export async function currentBranch(root: string): Promise<string> {
@@ -74,6 +94,20 @@ export async function branchExists(root: string, name: string): Promise<boolean>
 
 export async function createBranch(root: string, name: string): Promise<void> {
   await git(root, ['checkout', '-q', '-b', name])
+}
+
+/**
+ * Deletes a local branch, force (`-D`) rather than `-d`: this exists for the
+ * `baseline` unwind path, where a run that fails partway must delete the run
+ * branch it just created so a retry does not die on "branch already
+ * exists." A branch created moments ago for a fresh run is never something
+ * the merge-safety check behind `-d` needs to protect. Fails (does not
+ * silently succeed) if the branch does not exist, since a caller unwinding
+ * a partial failure needs to know its assumption about what it created was
+ * wrong.
+ */
+export async function deleteBranch(root: string, name: string): Promise<void> {
+  await git(root, ['branch', '-D', name])
 }
 
 export async function addWorktree(root: string, dir: string, commit: string): Promise<void> {

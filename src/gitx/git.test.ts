@@ -9,6 +9,7 @@ import {
   changedFiles,
   createBranch,
   currentBranch,
+  deleteBranch,
   headCommit,
   isClean,
   removeWorktree,
@@ -88,11 +89,31 @@ describe('gitx', () => {
     expect(await changedFiles(root, base)).toEqual(['a.ts'])
   })
 
-  it('does not see a new untracked file (documented gap: diff against a ref does not include untracked adds)', async () => {
+  it('sees a new untracked file the agent never staged', async () => {
     const root = await scratchRepo()
     const base = await headCommit(root)
     await writeFile(path.join(root, 'sneaky.ts'), 'export const s = 1\n')
+    expect(await changedFiles(root, base)).toEqual(['sneaky.ts'])
+  })
+
+  it('does not see an untracked file inside a gitignored directory', async () => {
+    const root = await scratchRepo()
+    await writeFile(path.join(root, '.gitignore'), 'ignored/\n')
+    await git(root, 'add', '-A')
+    await git(root, 'commit', '-q', '-m', 'add gitignore')
+    const base = await headCommit(root)
+    await mkdir(path.join(root, 'ignored'))
+    await writeFile(path.join(root, 'ignored', 'results.tsv'), 'noise\n')
     expect(await changedFiles(root, base)).toEqual([])
+  })
+
+  it('does not double-report a file that was untracked and is now committed', async () => {
+    const root = await scratchRepo()
+    const base = await headCommit(root)
+    await writeFile(path.join(root, 'b.ts'), 'export const b = 1\n')
+    await git(root, 'add', '-A')
+    await git(root, 'commit', '-q', '-m', 'second')
+    expect(await changedFiles(root, base)).toEqual(['b.ts'])
   })
 
   it('handles a changed filename containing a space', async () => {
@@ -130,6 +151,20 @@ describe('gitx', () => {
     await createBranch(root, 'run/x')
     expect(await branchExists(root, 'run/x')).toBe(true)
     expect(await currentBranch(root)).toBe('run/x')
+  })
+
+  it('deletes a branch it created', async () => {
+    const root = await scratchRepo()
+    await createBranch(root, 'run/y')
+    await git(root, 'checkout', '-q', 'main')
+    expect(await branchExists(root, 'run/y')).toBe(true)
+    await deleteBranch(root, 'run/y')
+    expect(await branchExists(root, 'run/y')).toBe(false)
+  })
+
+  it('fails cleanly deleting a branch that does not exist', async () => {
+    const root = await scratchRepo()
+    await expect(deleteBranch(root, 'no/such/branch')).rejects.toThrow(/branch/)
   })
 
   it('adds a detached worktree at a commit', async () => {

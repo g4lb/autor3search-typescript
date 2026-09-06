@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Delta } from '../stats/delta.js'
-import { decide } from './verdict.js'
+import { decide, requiredCount } from './verdict.js'
 
 function d(over: Partial<Delta> & { name: string }): Delta {
   return {
@@ -107,5 +107,51 @@ describe('decide', () => {
 
   it('throws on an empty delta set rather than scoring nothing', () => {
     expect(() => decide({ ...BASE, deltas: [] })).toThrow(/no benchmarks/)
+  })
+
+  // decide() takes Delta[] straight from the statistics layer, which this
+  // module does not control. A degenerate Delta (zero/negative baseNs, a
+  // NaN p-value) must not be allowed to fall through to geoMean and throw
+  // its generic, benchmark-less "must be positive" error three frames deep
+  // -- decide() rejects it itself, naming the offending benchmark, so the
+  // failure is diagnosable at the boundary where the bad data entered.
+  it('rejects a delta with baseNs of zero instead of dividing by it silently', () => {
+    const deltas = [d({ name: 'a', baseNs: 0, candNs: 10 })]
+    expect(() => decide({ ...BASE, deltas })).toThrow(/"a"/)
+  })
+
+  it('rejects a delta whose ratio is NaN (both sides zero) instead of throwing from geoMean', () => {
+    const deltas = [d({ name: 'a', baseNs: 0, candNs: 0 })]
+    expect(() => decide({ ...BASE, deltas })).toThrow(/"a"/)
+  })
+
+  it('rejects a delta with a negative baseNs', () => {
+    const deltas = [d({ name: 'a', baseNs: -5 })]
+    expect(() => decide({ ...BASE, deltas })).toThrow(/"a"/)
+  })
+
+  it('rejects a delta with a NaN p-value', () => {
+    const deltas = [d({ name: 'a', p: NaN })]
+    expect(() => decide({ ...BASE, deltas })).toThrow(/"a"/)
+  })
+
+  it('rejects a delta with a p-value outside [0, 1]', () => {
+    const deltas = [d({ name: 'a', p: 1.5 })]
+    expect(() => decide({ ...BASE, deltas })).toThrow(/"a"/)
+  })
+})
+
+describe('requiredCount', () => {
+  it('finds the smallest per-side count whose floor clears ALPHA/k', () => {
+    // floor(5,5) = 0.0079365 > 0.05/7 = 0.0071429; floor(6,6) = 0.0021645 clears it.
+    expect(requiredCount(7)).toBe(6)
+  })
+
+  it('reports unreachable rather than falsely naming the cap as a fix', () => {
+    // No per-side count up to the 64 cap gets the exact floor below this
+    // threshold (floor(64, 64) is about 8.35e-38): returning 64 anyway, as
+    // if raising count to 64 would fix it, would be misleading advice a
+    // caller could act on and still see every experiment discard.
+    expect(requiredCount(1e40)).toBeUndefined()
   })
 })

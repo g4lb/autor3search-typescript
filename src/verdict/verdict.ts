@@ -48,6 +48,31 @@ export function decide(input: VerdictInput): Verdict {
     throw new Error('cannot decide with no benchmarks compared')
   }
 
+  // decide() must be total: its Delta[] input comes from the statistics
+  // layer, which this module does not control. Left unchecked, a zero or
+  // negative baseNs/candNs (division, or a 0/0 ratio) or an out-of-range p
+  // would either throw geoMean's generic "must be positive" error with no
+  // benchmark attached, or -- for a positive/zero ratio, which geoMean's
+  // check happily lets through -- silently produce an infinite score. Reject
+  // it explicitly here instead, naming the benchmark, so a corrupt upstream
+  // Delta is diagnosable at the boundary rather than three frames deep or
+  // not diagnosed at all.
+  for (const delta of deltas) {
+    if (!(delta.baseNs > 0) || !Number.isFinite(delta.baseNs)) {
+      throw new Error(
+        `invalid delta for "${delta.name}": baseNs must be a positive finite number, got ${delta.baseNs}`,
+      )
+    }
+    if (!(delta.candNs > 0) || !Number.isFinite(delta.candNs)) {
+      throw new Error(
+        `invalid delta for "${delta.name}": candNs must be a positive finite number, got ${delta.candNs}`,
+      )
+    }
+    if (!(delta.p >= 0 && delta.p <= 1)) {
+      throw new Error(`invalid delta for "${delta.name}": p must be a number in [0, 1], got ${delta.p}`)
+    }
+  }
+
   const score = geoMean(deltas.map((d) => d.candNs / d.baseNs))
   const k = deltas.length
   const correctedAlpha = ALPHA / k
@@ -61,11 +86,17 @@ export function decide(input: VerdictInput): Verdict {
   }
   const floor = minAchievableP(rounds, rounds)
   if (floor > correctedAlpha) {
+    const suggestion = requiredCount(k)
+    const advice =
+      suggestion === undefined
+        ? `No per-side round count up to ${MAX_REQUIRED_COUNT} would clear it either — reduce the ` +
+          `number of benchmarks compared instead.`
+        : `Raise count to at least ${suggestion}.`
     warnings.push(
       `no KEEP was reachable: with ${rounds} rounds per side the smallest attainable two-sided ` +
         `p-value is ${floor.toExponential(2)}, above the Bonferroni-corrected threshold of ` +
         `${correctedAlpha.toExponential(2)} for ${k} benchmarks — every experiment would discard ` +
-        `regardless of what changed. Raise count to at least ${requiredCount(k)}.`,
+        `regardless of what changed. ${advice}`,
     )
   }
 
@@ -93,10 +124,28 @@ export function decide(input: VerdictInput): Verdict {
   return { status: 'keep', score, regressions, correctedAlpha, warnings }
 }
 
-/** The smallest per-side round count whose exact p-floor clears ALPHA/k. */
-function requiredCount(k: number): number {
-  for (let n = 4; n <= 64; n++) {
+/** Largest per-side round count `requiredCount` will search up to. */
+const MAX_REQUIRED_COUNT = 64
+
+/**
+ * The smallest per-side round count whose exact p-floor clears ALPHA/k, or
+ * `undefined` if no count up to `MAX_REQUIRED_COUNT` does.
+ *
+ * The brief's version returned the cap itself in that case, which reads as
+ * "raising count to 64 fixes it" when 64 in fact still cannot clear the
+ * bar — misleading advice for a caller that acts on it and then watches
+ * every experiment keep discarding anyway. Reporting "unreachable"
+ * explicitly instead lets the caller be told to reduce benchmark count
+ * instead of chasing a round count that was never going to help.
+ *
+ * Exported for testing: the case this guards against needs k on the order
+ * of 1e36 (floor(64, 64) is about 8.35e-38) to reach the cap for real,
+ * which is unreachable through `decide`'s own Delta[] input without
+ * constructing an array of that size.
+ */
+export function requiredCount(k: number): number | undefined {
+  for (let n = 4; n <= MAX_REQUIRED_COUNT; n++) {
     if (minAchievableP(n, n) < ALPHA / k) return n
   }
-  return 64
+  return undefined
 }

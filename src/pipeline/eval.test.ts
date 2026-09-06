@@ -555,6 +555,36 @@ describe('runEval: stop', () => {
   })
 })
 
+describe('runEval: unfreeze exemption', () => {
+  // Priority 3 from the final whole-branch review: `baseline` used to
+  // snapshot `freezableFiles` with no reference to `config.unfreeze` at
+  // all, so a file the config declares exempt was still hashed into the
+  // manifest and still silently reverted by gate 3 on every eval --
+  // directly contradicting both `init`'s own generated comment on the key
+  // and spec section 6.
+  it('a file listed in unfreeze is absent from the manifest and survives an eval unmodified', async () => {
+    const { root, ctx } = await setup({
+      ...FAST_MEASURE_PATCHES,
+      unfreeze: JSON.stringify(['src/wordcount.test.ts']),
+    })
+    const dir = runDir(root, TAG)
+    const baseline = await readBaseline(dir)
+    expect(Object.keys(baseline.manifest.files)).not.toContain('src/wordcount.test.ts')
+
+    const weakened =
+      "import { describe, it } from 'node:test'\ndescribe('countWords', () => { it('does nothing', () => {}) })\n"
+    await addAndCommit(root, 'src/wordcount.test.ts', weakened, 'edit the unfrozen test file')
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: constMeasureOne })
+
+    expect(outcome.restoredFiles).not.toContain('src/wordcount.test.ts')
+    expect(outcome.failedGate).not.toBe('unmanifested')
+    expect(outcome.failedGate).not.toBe('restore')
+    const onDisk = await readFile(path.join(root, 'src', 'wordcount.test.ts'), 'utf8')
+    expect(onDisk).toBe(weakened)
+  })
+})
+
 describe('runEval: results.tsv', () => {
   it('appends exactly one results.tsv row per experiment', async () => {
     const { ctx } = await setup(FAST_MEASURE_PATCHES)

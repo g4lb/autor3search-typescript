@@ -217,7 +217,13 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
     try {
       const head = await headCommit(ctx.repoRoot)
 
-      const freezable = await freezableFiles(ctx.repoRoot)
+      // `config.unfreeze` names test/bench files deliberately exempted from
+      // the freeze (see `renderConfigYaml`'s own comment on the key, and
+      // spec section 6) -- they must never be snapshotted or hashed into the
+      // manifest in the first place, or gate 3's restore would overwrite the
+      // agent's edits to them on every eval regardless of this config.
+      const unfreeze = new Set(config.unfreeze)
+      const freezable = (await freezableFiles(ctx.repoRoot)).filter((f) => !unfreeze.has(f))
       const manifest = await snapshot(ctx.repoRoot, freezable, frozenDir)
 
       await addWorktree(ctx.repoRoot, worktreeDir, head)

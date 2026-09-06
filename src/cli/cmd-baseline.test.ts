@@ -44,6 +44,29 @@ async function initAndCommit(root: string, ctx: RunCtx): Promise<void> {
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 
+/**
+ * Substitutes one or more top-level `key: value` lines in the generated
+ * config, mirroring exactly what `cmd-init`'s own renderer writes -- the
+ * same helper other CLI-level suites in this project use.
+ */
+async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promise<void> {
+  let text = await readFile(ctx.configPath, 'utf8')
+  for (const [key, value] of Object.entries(patches)) {
+    const re = new RegExp(`^${key}:.*$`, 'm')
+    if (!re.test(text)) throw new Error(`patchConfig: key not found in config: ${key}`)
+    text = text.replace(re, `${key}: ${value}`)
+  }
+  await writeFile(ctx.configPath, text, 'utf8')
+}
+
+/** Like `initAndCommit`, but patches the generated config before committing it. */
+async function initWithConfigAndCommit(root: string, ctx: RunCtx, patches: Record<string, string>): Promise<void> {
+  expect(await cmdInit(ctx, [])).toBe(0)
+  await patchConfig(ctx, patches)
+  await git(root, ['add', 'program.md', '.gitignore'])
+  await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
+}
+
 /** Adds a file and commits it, so the working tree stays clean for `baseline`. */
 async function addAndCommit(root: string, rel: string, body: string, message: string): Promise<void> {
   await writeFile(path.join(root, rel), body, 'utf8')
@@ -214,6 +237,27 @@ describe('cmdBaseline', () => {
     expect(Object.keys(rec.manifest.files)).toContain('src/wordcount.bench.ts')
     // The actual bytes were copied into the frozen snapshot, not just listed.
     expect(await exists(path.join(dir, 'frozen', 'src', 'wordcount.bench.ts'))).toBe(true)
+  })
+
+  // Priority 3 from the final whole-branch review: a file the config
+  // declares in `unfreeze` must never be snapshotted or hashed into the
+  // manifest -- otherwise gate 3's restore would silently revert the
+  // agent's edits to a file the config explicitly exempted, contradicting
+  // both `init`'s own generated comment and spec section 6.
+  it('excludes a file listed in unfreeze from the manifest and the frozen snapshot', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    captureOutput()
+    await initWithConfigAndCommit(root, ctx, { unfreeze: JSON.stringify(['src/wordcount.test.ts']) })
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6'])).toBe(0)
+
+    const dir = runDir(root, 'sep6')
+    const rec = await readBaseline(dir)
+    expect(Object.keys(rec.manifest.files)).not.toContain('src/wordcount.test.ts')
+    expect(Object.keys(rec.manifest.files)).toContain('src/wordcount.bench.ts')
+    expect(await exists(path.join(dir, 'frozen', 'src', 'wordcount.test.ts'))).toBe(false)
   })
 
   it('records the config hash and the lockfile hash', async () => {

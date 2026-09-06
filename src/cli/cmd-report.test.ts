@@ -113,10 +113,34 @@ describe('cmdReport', () => {
 
     expect(code).toBe(0)
     const text = stdout.join('')
-    // 0.9 * 0.8 = 0.72, not 0.8 (the latest) and not 0.85 (the mean).
-    expect(text).toMatch(/0\.7200x/)
-    expect(text).not.toMatch(/0\.8000x/)
-    expect(text).not.toMatch(/0\.8500x/)
+    // 0.9 * 0.8 = 0.72 (the raw candidate/baseline time ratio), not 0.8
+    // (the latest) and not 0.85 (the mean) -- printed as "1.39x faster",
+    // the inverse of the ratio, with the ratio itself named alongside it.
+    expect(text).toMatch(/1\.39x faster/)
+    expect(text).toMatch(/cumulative time ratio 0\.7200/)
+    expect(text).not.toMatch(/cumulative time ratio 0\.8000/)
+    expect(text).not.toMatch(/cumulative time ratio 0\.8500/)
+  })
+
+  // The headline number must read as a speedup, not as its own inverse: a
+  // large win (a small ratio) must print as a LARGE "x faster" figure, not
+  // as a small number suffixed "x" that reads like a slowdown.
+  it('prints the cumulative speedup as "N faster", the inverse of the raw ratio, not the raw ratio itself', async () => {
+    const ctx = ctxFor(root)
+    const rows: Row[] = [
+      { commit: 'aaa1111', score: 0.08, bestBenchDelta: -92, pMin: 0.001, status: 'keep', reason: '', description: '12x win' },
+    ]
+    for (const r of rows) await appendRow(ctx.resultsPath, r)
+    captureOutput()
+
+    const code = await cmdReport(ctx, [])
+
+    expect(code).toBe(0)
+    const text = stdout.join('')
+    // 1 / 0.08 = 12.5 -- a big, obviously-a-win number, not "0.08x" which
+    // reads as roughly thirteen times SLOWER.
+    expect(text).toMatch(/12\.50x faster/)
+    expect(text).not.toMatch(/0\.0800x faster/)
   })
 
   // The wording itself must make clear this is a compounded, end-to-end

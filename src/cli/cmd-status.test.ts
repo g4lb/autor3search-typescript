@@ -228,6 +228,32 @@ describe('cmdStatus', () => {
     expect(text).toMatch(/crash: 0/)
   })
 
+  // Priority 4 from the final whole-branch review: the headline number must
+  // read as a speedup, not as its own inverse. A 12x win is a candidate/
+  // baseline time ratio of 0.08, and printing that ratio directly suffixed
+  // "x" reads as roughly thirteen times SLOWER.
+  it('prints the cumulative speedup as "N faster", the inverse of the raw ratio, not the raw ratio itself', async () => {
+    const { ctx } = await setup()
+    const row: Row = {
+      commit: 'aaa1111',
+      score: 0.08,
+      bestBenchDelta: -92,
+      pMin: 0.001,
+      status: 'keep',
+      reason: '',
+      description: '12x win',
+    }
+    await appendRow(ctx.resultsPath, row)
+    captureOutput()
+
+    const code = await cmdStatus(ctx, ['-tag', TAG])
+
+    expect(code).toBe(0)
+    const text = stdout.join('')
+    expect(text).toMatch(/12\.50x faster/)
+    expect(text).not.toMatch(/0\.0800x faster/)
+  })
+
   it('reports whether an eval is in flight', async () => {
     const { root, ctx } = await setup()
     const dir = runDir(root, TAG)

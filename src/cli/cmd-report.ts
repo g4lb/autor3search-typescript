@@ -1,6 +1,7 @@
 import { shortSha } from '../gitx/git.js'
 import { RESULTS_PATH, loadRows, summarize } from '../results/results.js'
 import type { RunCtx } from './runctx.js'
+import { formatCumulativeSpeedup } from './speedup.js'
 
 const STATUSES = ['keep', 'discard', 'fail', 'crash'] as const
 
@@ -59,9 +60,9 @@ export async function cmdReport(ctx: RunCtx, _argv: readonly string[]): Promise<
   // latest row's score alone would silently understate or overstate that,
   // depending on how many wins came before it.
   lines.push(
-    `cumulative speedup: ${summary.cumulativeSpeedup.toFixed(4)}x ` +
-      '(the product of every KEPT experiment\'s own score, compounded across the whole run -- ' +
-      'not the most recent experiment\'s score by itself)',
+    `cumulative speedup: ${formatCumulativeSpeedup(summary.cumulativeSpeedup)} ` +
+      "(the product of every KEPT experiment's own score, compounded across the whole run -- " +
+      "not the most recent experiment's score by itself)",
   )
 
   if (summary.topWins.length > 0) {

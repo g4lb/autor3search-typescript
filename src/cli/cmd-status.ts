@@ -8,6 +8,7 @@ import { runDir } from '../state/home.js'
 import { readEvalLock } from '../state/lock.js'
 import { readStop } from '../state/stop.js'
 import type { RunCtx } from './runctx.js'
+import { formatCumulativeSpeedup } from './speedup.js'
 
 /**
  * Duplicated from cmd-baseline.ts rather than imported -- see the identical
@@ -179,7 +180,7 @@ export async function cmdStatus(ctx: RunCtx, argv: readonly string[]): Promise<n
 
   lines.push(`  experiments:     ${rows.length} total`)
   lines.push(`    ${STATUSES.map((s) => `${s}: ${summary.counts[s] ?? 0}`).join('  ')}`)
-  lines.push(`  cumulative speedup: ${summary.cumulativeSpeedup.toFixed(4)}x`)
+  lines.push(`  cumulative speedup: ${formatCumulativeSpeedup(summary.cumulativeSpeedup)}`)
   if (summary.topWins.length > 0) {
     lines.push('  top wins:')
     for (const w of summary.topWins) {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -189,6 +189,26 @@ describe('runEval: gate order', () => {
     expect(outcome.verdict.status).toBe('fail')
     expect(outcome.failedGate).toBe('scope')
     expect(outcome.message).toMatch(/notes\.txt/)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  // The scope-gate escape from the final whole-branch review (Priority 2):
+  // an agent-created `.gitignore` must not be able to hide an untracked file
+  // outside `scope` from `changedFiles`. Left uncommitted AND unstaged --
+  // exactly the shape of the exploit -- to prove the gate does not depend on
+  // `git add` either.
+  it('gate 1: still rejects a file hidden behind an agent-created .gitignore', async () => {
+    const { root, ctx } = await setup()
+    await mkdir(path.join(root, 'lib'), { recursive: true })
+    await writeFile(path.join(root, 'lib', '.gitignore'), '*\n', 'utf8')
+    await writeFile(path.join(root, 'lib', 'evil.ts'), 'export const evil = 1\n', 'utf8')
+    const spy = vi.fn()
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(outcome.verdict.status).toBe('fail')
+    expect(outcome.failedGate).toBe('scope')
+    expect(outcome.message).toMatch(/lib\/evil\.ts/)
     expect(spy).not.toHaveBeenCalled()
   })
 

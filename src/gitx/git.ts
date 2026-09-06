@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { walkRepo } from '../discover/files.js'
+import { RESULTS_PATH } from '../results/results.js'
 import { ok, run } from '../runner/exec.js'
 
 const TIMEOUT_MS = 60_000
@@ -73,11 +75,30 @@ function parseNulList(out: string): string[] {
 }
 
 /**
+ * Files the harness itself owns and writes into the repository, gitignored
+ * on purpose by `init` -- never something the scope gate should ever see as
+ * "changed," but also never something that may be trusted to stay
+ * gitignored (see below). `.autoresearch/`, `dist/`, `build/`, `coverage/`,
+ * `out/` and `node_modules/` need no entry here: `walkRepo`'s own
+ * `SKIP_DIRS` (and its dot-directory skip) already excludes them
+ * unconditionally, by name, independent of any `.gitignore`.
+ *
+ * `run.log` is duplicated from `cli/runctx.ts`'s `LOG_PATH` rather than
+ * imported -- importing it here would cycle (`runctx.ts` imports this
+ * module for `repoRoot`). Must be kept in sync with it.
+ */
+const HARNESS_OWNED_FILES = new Set<string>([RESULTS_PATH, 'run.log'])
+
+function isHarnessOwned(rel: string): boolean {
+  return HARNESS_OWNED_FILES.has(rel) || rel.endsWith('.cpuprofile')
+}
+
+/**
  * Repo-relative POSIX paths touched since `sinceRef`: everything the scope
  * gate must treat as "changed by the agent," whether or not it was ever
  * `git add`-ed.
  *
- * This is the union of two git views, because neither alone answers the
+ * This is the union of two views, because neither alone answers the
  * question:
  *
  * - `diff --name-only <ref>` (ref vs. the *working tree*, not `HEAD`) — this
@@ -87,27 +108,36 @@ function parseNulList(out: string): string[] {
  *   already knows about, so a new file outside `scope` that is never
  *   `git add`-ed would silently evade a gate built on `diff` alone — a real
  *   scope-gate bypass, not a hypothetical one.
- * - `ls-files --others --exclude-standard` — lists untracked files, closing
- *   that gap. `--exclude-standard` is load-bearing, not decoration: without
- *   it, the harness's own gitignored outputs (`results.tsv`, `run.log`,
- *   `.autoresearch/`, `node_modules/`) would appear as changes outside
- *   `scope` and fail every eval. Once a new file is committed, `diff` picks
- *   it up as an addition and `ls-files --others` naturally stops listing it
- *   (it is no longer "other"), so the union never double-reports a file
- *   across a commit boundary.
+ * - a filesystem walk (`walkRepo`) minus git's own tracked set (`ls-files`,
+ *   with NO `--exclude-standard`) minus the harness-owned files above —
+ *   this is what closes the untracked-file gap `diff` leaves, and it is
+ *   deliberately NOT `ls-files --others --exclude-standard`: that flag
+ *   honors whatever `.gitignore` is on disk right now, including one the
+ *   AGENT just created. `printf '*\n' > lib/.gitignore` would hide `lib/`
+ *   entirely from `ls-files --others` and from `git status`, letting
+ *   arbitrary untracked source outside `scope` go completely unseen — the
+ *   exact bypass this function exists to prevent. Enumerating the
+ *   filesystem directly and subtracting git's tracked set (not git's
+ *   *ignored* set) is immune to any `.gitignore` content, agent-authored or
+ *   not. Once a new file is committed, `diff` picks it up as an addition
+ *   and it drops out of "untracked" (it is now tracked), so the union never
+ *   double-reports a file across a commit boundary.
  *
- * Both commands use `-z`: a path with a space or embedded newline would
- * otherwise be able to split into extra entries under the default
- * newline-separated, C-quoted output, and a scope gate that mis-parses a
- * filename is one an agent can bypass by naming a file carefully. This is a
- * security property, not formatting.
+ * `diff` and `ls-files` both use `-z`: a path with a space or embedded
+ * newline would otherwise be able to split into extra entries under the
+ * default newline-separated, C-quoted output, and a scope gate that
+ * mis-parses a filename is one an agent can bypass by naming a file
+ * carefully. This is a security property, not formatting.
  */
 export async function changedFiles(root: string, sinceRef: string): Promise<string[]> {
-  const [diffOut, untrackedOut] = await Promise.all([
+  const [diffOut, allFiles, trackedOut] = await Promise.all([
     gitRaw(root, ['diff', '--name-only', '-z', sinceRef]),
-    gitRaw(root, ['ls-files', '--others', '--exclude-standard', '-z']),
+    walkRepo(root),
+    gitRaw(root, ['ls-files', '-z']),
   ])
-  return [...new Set([...parseNulList(diffOut), ...parseNulList(untrackedOut)])].sort()
+  const tracked = new Set(parseNulList(trackedOut))
+  const untracked = allFiles.filter((f) => !tracked.has(f) && !isHarnessOwned(f))
+  return [...new Set([...parseNulList(diffOut), ...untracked])].sort()
 }
 
 export async function currentBranch(root: string): Promise<string> {

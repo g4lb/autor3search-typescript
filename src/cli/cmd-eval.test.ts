@@ -213,10 +213,13 @@ describe('cmdEval', () => {
 
   // A genuine measurement-child crash, driven through the real CLI end to
   // end (not an injected test double): a benchmark that throws only when a
-  // marker file exists in its OWN process's cwd. The marker is absent
-  // during baseline's smoke run (which executes in the separate worktree)
-  // and is created only in repoRoot, gitignored so the scope gate never
-  // sees it, right before this eval -- so only the candidate side crashes.
+  // marker environment variable is set. An env var (rather than a marker
+  // file) leaves both the working tree AND git's view of it completely
+  // untouched -- gate 8's clean-tree check and the scope gate both stay
+  // satisfied -- while still reaching the measurement child, which inherits
+  // this process's `env` by default (see `runner/exec.ts`). The marker is
+  // unset during baseline's smoke run and is set only right before this
+  // eval, so only the candidate side crashes.
   it('a real measurement-child crash exits 3 (CRASH), not 2 (FAIL)', async () => {
     const root = await makeDemoRepo()
     const ctx = ctxFor(root)
@@ -226,11 +229,8 @@ describe('cmdEval', () => {
       await writeFile(
         path.join(root, 'src', 'crash.bench.ts'),
         [
-          "import { existsSync } from 'node:fs'",
-          "import path from 'node:path'",
-          '',
           'export function benchCrash(): number {',
-          "  if (existsSync(path.join(process.cwd(), 'CRASH_NOW'))) {",
+          "  if (process.env['CRASH_NOW'] === '1') {",
           "    throw new Error('boom: forced crash for testing')",
           '  }',
           '  return 1',
@@ -239,7 +239,6 @@ describe('cmdEval', () => {
         ].join('\n'),
         'utf8',
       )
-      await writeFile(path.join(root, '.gitignore'), 'CRASH_NOW\n', 'utf8')
       await git(root, ['add', '-A'])
       await git(root, ['commit', '-q', '-m', 'add a crash-aware benchmark'])
 
@@ -254,15 +253,18 @@ describe('cmdEval', () => {
       errSpy.mockRestore()
     }
 
-    await writeFile(path.join(root, 'CRASH_NOW'), '', 'utf8')
+    process.env['CRASH_NOW'] = '1'
+    try {
+      captureOutput()
+      const code = await cmdEval(ctx, ['-tag', TAG, '--json'])
 
-    captureOutput()
-    const code = await cmdEval(ctx, ['-tag', TAG, '--json'])
-
-    expect(code).toBe(3)
-    const parsed = JSON.parse(stdout.join('')) as { status: string; failed_gate: string }
-    expect(parsed.status).toBe('crash')
-    expect(parsed.failed_gate).toBe('measure')
+      expect(code).toBe(3)
+      const parsed = JSON.parse(stdout.join('')) as { status: string; failed_gate: string }
+      expect(parsed.status).toBe('crash')
+      expect(parsed.failed_gate).toBe('measure')
+    } finally {
+      delete process.env['CRASH_NOW']
+    }
   })
 
   it('records -desc on the results.tsv row', async () => {

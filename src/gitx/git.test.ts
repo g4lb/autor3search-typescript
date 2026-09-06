@@ -110,15 +110,31 @@ describe('gitx', () => {
     expect(await changedFiles(root, base)).toEqual([' evil.ts'])
   })
 
-  it('does not see an untracked file inside a gitignored directory', async () => {
+  it('does not see the harness-owned results.tsv as changed even though it is gitignored', async () => {
     const root = await scratchRepo()
-    await writeFile(path.join(root, '.gitignore'), 'ignored/\n')
+    await writeFile(path.join(root, '.gitignore'), 'results.tsv\nrun.log\n')
     await git(root, 'add', '-A')
     await git(root, 'commit', '-q', '-m', 'add gitignore')
     const base = await headCommit(root)
-    await mkdir(path.join(root, 'ignored'))
-    await writeFile(path.join(root, 'ignored', 'results.tsv'), 'noise\n')
+    await writeFile(path.join(root, 'results.tsv'), 'noise\n')
+    await writeFile(path.join(root, 'run.log'), 'noise\n')
     expect(await changedFiles(root, base)).toEqual([])
+  })
+
+  // The exact bypass this function exists to prevent: an agent-created
+  // `.gitignore` must not be able to hide arbitrary untracked source from
+  // the scope gate, even though the identical pattern legitimately hides
+  // the harness's OWN gitignored outputs (see the test above). Untracked
+  // discovery is a filesystem walk minus git's tracked set, not
+  // `ls-files --others --exclude-standard`, precisely so this stays true
+  // regardless of what any `.gitignore` on disk says.
+  it('still reports a file hidden behind an agent-created .gitignore', async () => {
+    const root = await scratchRepo()
+    const base = await headCommit(root)
+    await mkdir(path.join(root, 'lib'))
+    await writeFile(path.join(root, 'lib', '.gitignore'), '*\n')
+    await writeFile(path.join(root, 'lib', 'evil.ts'), 'export const evil = 1\n')
+    expect(await changedFiles(root, base)).toEqual(['lib/.gitignore', 'lib/evil.ts'])
   })
 
   it('does not double-report a file that was untracked and is now committed', async () => {

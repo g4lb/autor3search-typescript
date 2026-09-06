@@ -1,0 +1,10 @@
+{
+  "name": "wordcount-demo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A tiny, real TypeScript package with a fixable performance bug, used as a fixture by autoresearch-typescript's own test suite.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

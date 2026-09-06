@@ -93,6 +93,23 @@ describe('parseConfig', () => {
       /benchmarks must be an array of strings/,
     )
   })
+
+  it('rejects an empty test_command', () => {
+    expect(() => parseConfig('scope: ["src/**"]\ntest_command: ""\n')).toThrow(
+      /test_command must not be empty/,
+    )
+  })
+
+  it('accepts an empty typecheck_command, unlike test_command', () => {
+    // cmd-init (task 16) legitimately writes an empty typecheck_command when
+    // the target repository has no tsconfig.json, and the eval gate chain
+    // (task 19) treats an empty typecheck_command as "skip this gate," the
+    // same way an empty build_command is already treated. A config init
+    // itself writes must round-trip through loadConfig without a human ever
+    // having to edit typecheck_command by hand.
+    const c = parseConfig('scope: ["src/**"]\ntypecheck_command: ""\n')
+    expect(c.typecheckCommand).toBe('')
+  })
 })
 
 describe('defaultConfig', () => {

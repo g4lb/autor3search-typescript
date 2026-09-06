@@ -43,7 +43,7 @@ export interface Config {
   minEffectPct: number
   /** Bounds each subprocess phase. */
   timeout: string
-  /** Typecheck gate command. */
+  /** Typecheck gate command. Empty means skip (e.g. no tsconfig.json at init time). */
   typecheckCommand: string
   /** Optional build gate command. Empty means skip. */
   buildCommand: string

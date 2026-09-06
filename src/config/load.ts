@@ -129,7 +129,15 @@ function validate(c: Config): void {
   requireDuration(c.warmup, 'warmup')
   requireDuration(c.timeout, 'timeout')
   if (c.testCommand.trim() === '') throw new Error('test_command must not be empty')
-  if (c.typecheckCommand.trim() === '') throw new Error('typecheck_command must not be empty')
+  // typecheck_command, unlike test_command, may legitimately be empty: a
+  // repository with no tsconfig.json has nothing for `tsc --noEmit` to check
+  // against, and `cmd-init` writes an empty typecheck_command plus a printed
+  // warning for exactly that case (see task 16 / Ruling 25). The eval gate
+  // chain (task 19) already treats an empty typecheck_command as "skip this
+  // gate," mirroring build_command's existing empty-means-skip semantics
+  // above -- so rejecting empty here would make a config that `init` itself
+  // legitimately writes fail to load, surfacing only at the user's first
+  // `eval`, long after `init` reported success.
 }
 
 export function parseConfig(text: string): Config {

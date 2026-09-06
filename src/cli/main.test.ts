@@ -263,6 +263,61 @@ describe('main', () => {
     expect(stdout.join('')).toMatch(/stop/)
   })
 
+  // Ruling 34, same reasoning as above: report must be proven reachable
+  // through main's own dispatch table, not merely implemented and tested in
+  // its own file.
+  it('dispatches "report" through main -- registered, not merely implemented', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+
+    // No init/baseline/eval at all -- report on a virgin repo must still
+    // work, with a helpful "nothing recorded yet" message rather than an
+    // error, and it must be reachable through main to prove it.
+    const code = await main(['-C', root, 'report'])
+
+    expect(code).toBe(0)
+    expect(stdout.join('')).toMatch(/no experiments recorded yet/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  it('lists "report" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/report/)
+  })
+
+  // Ruling 34, same reasoning as above: profile must be proven reachable
+  // through main's own dispatch table, not merely implemented and tested in
+  // its own file. It also must not require a baseline (point 3 of the task
+  // guidance), so this dispatches it straight after "init" with no
+  // "baseline" call at all.
+  it('dispatches "profile" through main -- registered, not merely implemented, and needs no baseline', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+    expect(await main(['-C', root, 'init'])).toBe(0)
+
+    captureOutput()
+    const code = await main(['-C', root, 'profile'])
+
+    expect(code).toBe(0)
+    // The demo fixture's own hot function -- proof this is real profiler
+    // attribution, not a stub that only lists Node internals.
+    expect(stdout.join('')).toMatch(/countWords/)
+    expect(stderr.join('')).toBe('')
+  }, 30_000)
+
+  it('lists "profile" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/profile/)
+  })
+
+  it('exposes exactly eight commands', () => {
+    expect(Object.keys(COMMANDS)).toHaveLength(8)
+  })
+
   // Ruling 34, extended: the mutation evidence for the doctor reachability
   // test also showed that HELP and COMMANDS are two independent strings
   // that can silently disagree -- removing a COMMANDS entry broke dispatch

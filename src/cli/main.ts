@@ -3,6 +3,8 @@ import { cmdBaseline } from './cmd-baseline.js'
 import { cmdDoctor } from './cmd-doctor.js'
 import { cmdEval } from './cmd-eval.js'
 import { cmdInit } from './cmd-init.js'
+import { cmdProfile } from './cmd-profile.js'
+import { cmdReport } from './cmd-report.js'
 import { cmdStatus } from './cmd-status.js'
 import { cmdStop } from './cmd-stop.js'
 import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
@@ -10,9 +12,7 @@ import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
 type Command = (ctx: RunCtx, argv: string[]) => Promise<number>
 
 /**
- * The command table. `report` is a later task, and until it lands an
- * attempt to run it is correctly an "unknown subcommand," not a stub that
- * pretends to work.
+ * The command table.
  *
  * Ruling 34: a command implemented and tested but never added here is
  * unreachable, yet looks completely healthy from inside its own task's
@@ -30,6 +30,8 @@ export const COMMANDS: Record<string, Command> = {
   eval: cmdEval,
   status: cmdStatus,
   stop: cmdStop,
+  report: cmdReport,
+  profile: cmdProfile,
 }
 
 const HELP = `autoresearch-typescript -- autonomous performance optimization for a TypeScript repository
@@ -43,6 +45,8 @@ Commands:
   eval      Run one experiment through the gate chain and report a verdict (0 KEEP, 1 DISCARD, 2 FAIL, 3 CRASH)
   status    Report where a run is: branch, commits, worktree, experiment counts, in-flight eval, pending stop (read-only)
   stop      Ask the agent to stop after its current experiment; -clear cancels, -force also signals the running eval
+  report    Summarize results.tsv: counts by status, cumulative speedup, largest individual wins
+  profile   Run the declared benchmarks under Node's CPU profiler and print the hottest functions
 
 Global flags:
   -C <dir>  Run as if invoked from <dir> (resolves that directory's git repository root)

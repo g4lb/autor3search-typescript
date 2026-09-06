@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -39,6 +39,13 @@ describe('detect', () => {
     expect((await detect(root)).installCommand).toBe('bun install --frozen-lockfile')
   })
 
+  it('detects bun from bun.lockb alone', async () => {
+    const root = await repo({ 'package.json': PKG, 'bun.lockb': '' })
+    const d = await detect(root)
+    expect(d.pm).toBe('bun')
+    expect(d.installCommand).toBe('bun install --frozen-lockfile')
+  })
+
   it('refuses a repo with no lockfile, since the baseline could not be reproduced', async () => {
     const root = await repo({ 'package.json': PKG })
     await expect(detect(root)).rejects.toThrow(/no lockfile/)
@@ -71,6 +78,18 @@ describe('detect', () => {
     await expect(detect(root)).rejects.toThrow(/package\.json/)
   })
 
+  it('distinguishes an unreadable package.json (e.g. a directory) from a missing one', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ars-pm-'))
+    await mkdir(path.join(root, 'package.json'))
+    try {
+      await detect(root)
+      expect.fail('expected detect() to throw')
+    } catch (e) {
+      expect((e as Error).message).toMatch(/could not read package\.json/)
+      expect((e as Error).message).not.toMatch(/does not look like a Node package/)
+    }
+  })
+
   // --- Judgment-point coverage beyond the brief's verbatim cases ---
 
   it('does not treat both bun lockfile names present at once as ambiguous', async () => {
@@ -98,9 +117,22 @@ describe('detect', () => {
     await expect(detect(root)).rejects.toThrow(/workspace|monorepo/i)
   })
 
-  it('refuses a package.json that is not valid JSON', async () => {
+  it('refuses a package.json that is not valid JSON, with an actionable message', async () => {
     const root = await repo({ 'package.json': '{ not json', 'package-lock.json': '{}' })
     await expect(detect(root)).rejects.toThrow(/not valid JSON/)
+    await expect(detect(root)).rejects.toThrow(/Fix the JSON syntax/)
+  })
+
+  it('does not treat workspaces: null as a workspace declaration', async () => {
+    // null is not a shape npm/yarn's own schema accepts for "workspaces", and is
+    // the idiomatic JSON spelling of "not set" -- unlike `[]`/`{}`, it does not
+    // signal workspace intent.
+    const root = await repo({
+      'package.json': JSON.stringify({ name: 'demo', workspaces: null }),
+      'package-lock.json': '{}',
+    })
+    const d = await detect(root)
+    expect(d.pm).toBe('npm')
   })
 })
 

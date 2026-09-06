@@ -57,9 +57,14 @@ async function exists(p: string): Promise<boolean> {
  * presence as opting a repository into workspace mode). Since a subtly wrong
  * guess here would weaken a guarantee the user believes they have, an empty
  * declaration is refused in the same way a populated one is.
+ *
+ * `"workspaces": null` is different: neither npm's nor yarn's schema accepts
+ * `null` for this field, and `null` is the idiomatic JSON spelling of "not
+ * set" — so, unlike `[]`/`{}`, it does not signal intent and is treated as
+ * absent.
  */
 function isWorkspaceDeclaration(workspaces: unknown): boolean {
-  return workspaces !== undefined
+  return workspaces !== undefined && workspaces !== null
 }
 
 /**
@@ -75,7 +80,10 @@ export async function assertSinglePackage(pkgJsonText: string, root: string): Pr
   try {
     pkg = JSON.parse(pkgJsonText)
   } catch (e) {
-    throw new Error(`package.json is not valid JSON: ${(e as Error).message}`)
+    throw new Error(
+      `package.json is not valid JSON: ${(e as Error).message}. ` +
+        'Fix the JSON syntax and try again.',
+    )
   }
   const workspaces = (pkg as { workspaces?: unknown }).workspaces
   if (isWorkspaceDeclaration(workspaces)) {
@@ -103,11 +111,21 @@ export async function detect(root: string): Promise<Detected> {
   let pkgText: string
   try {
     pkgText = await readFile(pkgPath, 'utf8')
-  } catch {
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(
+        `no package.json in ${root}: this does not look like a Node package. ` +
+          'Run autoresearch-typescript from the package root (the directory that contains ' +
+          'package.json).',
+      )
+    }
+    // package.json exists but could not be read (permissions, it's a directory,
+    // etc.) — that is a different problem than a missing package.json, and
+    // telling the user to create a file that already exists would be
+    // actively misleading.
     throw new Error(
-      `no package.json in ${root}: this does not look like a Node package. ` +
-        'Run autoresearch-typescript from the package root (the directory that contains ' +
-        'package.json).',
+      `could not read package.json in ${root}: ${(e as Error).message}. ` +
+        'Check that it is a regular, readable file and try again.',
     )
   }
   await assertSinglePackage(pkgText, root)

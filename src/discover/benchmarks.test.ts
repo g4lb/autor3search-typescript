@@ -130,4 +130,13 @@ describe('discoverBenchmarks', () => {
     const found = await discoverBenchmarks(root)
     expect(found).toEqual([])
   })
+
+  it('deduplicates a name reachable both via its own export modifier and an export list', async () => {
+    const root = await repoWith({
+      'src/p.bench.ts': 'export function benchParse() { return 1 }\nexport { benchParse }',
+    })
+    const found = await discoverBenchmarks(root)
+    expect(found).toHaveLength(1)
+    expect(found[0]!.id).toBe('src/p.bench.ts:benchParse')
+  })
 })

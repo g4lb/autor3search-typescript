@@ -21,10 +21,16 @@ function isBenchName(name: string): boolean {
  * Exported `bench*` names declared in one source text, keyed by the name a
  * consumer sees on the imported module — not necessarily the local
  * declaration name.
+ *
+ * Deduplicated: the same exported name can be reachable twice in one file —
+ * once via a declaration's own `export` modifier and again via a same-file
+ * `export { name }` clause naming it — and a caller measuring one id twice
+ * per round would double the sample rate for that benchmark without anyone
+ * asking for it, corrupting the statistics silently.
  */
 export function benchNamesInSource(text: string, fileName: string): string[] {
   const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true)
-  const names: string[] = []
+  const names = new Set<string>()
   for (const stmt of sf.statements) {
     const modifiers = ts.canHaveModifiers(stmt) ? ts.getModifiers(stmt) : undefined
     const isExported = modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) === true
@@ -36,13 +42,13 @@ export function benchNamesInSource(text: string, fileName: string): string[] {
 
     if (isExported && !isDefault) {
       if (ts.isFunctionDeclaration(stmt) && stmt.name && isBenchName(stmt.name.text)) {
-        names.push(stmt.name.text)
+        names.add(stmt.name.text)
       } else if (ts.isVariableStatement(stmt)) {
         for (const decl of stmt.declarationList.declarations) {
           if (!ts.isIdentifier(decl.name) || !isBenchName(decl.name.text)) continue
           const init = decl.initializer
           if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))) {
-            names.push(decl.name.text)
+            names.add(decl.name.text)
           }
         }
       }
@@ -65,11 +71,11 @@ export function benchNamesInSource(text: string, fileName: string): string[] {
     ) {
       for (const spec of stmt.exportClause.elements) {
         if (spec.isTypeOnly) continue
-        if (isBenchName(spec.name.text)) names.push(spec.name.text)
+        if (isBenchName(spec.name.text)) names.add(spec.name.text)
       }
     }
   }
-  return names
+  return [...names]
 }
 
 /**

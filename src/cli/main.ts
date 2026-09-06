@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { cmdBaseline } from './cmd-baseline.js'
 import { cmdDoctor } from './cmd-doctor.js'
 import { cmdEval } from './cmd-eval.js'
@@ -98,8 +100,39 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-// Only run when this module is the entry point -- not when imported by tests.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * True only when THIS file is the process's actual entry point, not when it
+ * is merely imported (by a test, or as a dependency).
+ *
+ * `npm` installs a package's `bin` as a symlink under `node_modules/.bin/`,
+ * so a real installed invocation runs this file through that symlink.
+ * `import.meta.url` for the entry module is Node's own resolved (symlink-
+ * followed) URL, while `process.argv[1]` is left exactly as invoked -- the
+ * symlink path itself. Comparing the two directly, as a naive
+ * `import.meta.url === \`file://${process.argv[1]}\`` check does, therefore
+ * NEVER matches for an installed package: this guard would silently never
+ * fire, `main()` would never run, and the process would exit 0 -- the KEEP
+ * exit code -- having done nothing at all, for every command including
+ * `--help`. `realpathSync` resolves both the symlink and any other
+ * indirection (a relative path, `.` segments) before comparing, so a
+ * symlinked, a relative, and a directly-invoked entry point all still match.
+ *
+ * `realpathSync` requires the path to exist; the fallback below only ever
+ * matters for a degenerate invocation (no `argv[1]` at all, e.g. a REPL) and
+ * intentionally reports "not the entry point" rather than throwing, since a
+ * thrown error here would crash an import that merely wants `COMMANDS` or
+ * `main` for testing.
+ */
+function isEntryPoint(): boolean {
+  if (process.argv[1] === undefined) return false
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+  } catch {
+    return false
+  }
+}
+
+if (isEntryPoint()) {
   main(process.argv.slice(2)).then((code) => {
     process.exitCode = code
   })

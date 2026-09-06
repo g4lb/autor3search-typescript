@@ -1,7 +1,17 @@
 import { spawn } from 'node:child_process'
 
-/** Largest output we retain per stream. Beyond this we keep the tail. */
-export const MAX_CAPTURED_BYTES = 4 * 1024 * 1024
+/**
+ * Largest output we retain per stream, in characters (UTF-16 code units),
+ * not bytes. The cap exists to bound retained *memory*, and these are
+ * JavaScript strings living in V8 — which stores them as one-byte (latin1)
+ * or two-byte sequences, so retained memory tracks `.length` (code units),
+ * not UTF-8 byte length. Measuring in UTF-8 bytes would make the name
+ * accurate but the bound wrong: for a two-byte-represented string, the
+ * UTF-8 length can be smaller than the memory actually held, undercounting
+ * exactly where the bound matters most. Beyond this many characters we keep
+ * the tail.
+ */
+export const MAX_CAPTURED_CHARS = 4 * 1024 * 1024
 
 export interface ExecOptions {
   cwd: string
@@ -31,16 +41,38 @@ export function tail(s: string, lines: number): string {
   return parts.slice(Math.max(0, parts.length - lines)).join('\n')
 }
 
-/** Accumulates output while keeping only the tail once the cap is exceeded. */
-class Capture {
+/**
+ * Accumulates output while keeping only the tail once the cap is exceeded.
+ *
+ * Exported for testing: the eviction and single-chunk-trim logic below is
+ * only reliably exercised by calling `push` directly — a real subprocess's
+ * output arrives from the OS pipe in fragments (observed ~64 KiB on this
+ * machine for a 4 MiB+ write), so driving it through a spawned process
+ * cannot be trusted to ever deliver a single chunk larger than the cap.
+ */
+export class Capture {
   private chunks: string[] = []
   private size = 0
   truncated = false
 
   push(s: string): void {
+    if (s.length > MAX_CAPTURED_CHARS) {
+      // A single incoming chunk can itself exceed the whole cap (a chatty
+      // process writing in one huge call, or a pipe that happens to hand us
+      // a large read). Chunk-granularity eviction below can't bound this —
+      // with only one chunk held there is nothing to evict — so trim this
+      // string's own tail directly. Its last MAX_CAPTURED_CHARS characters
+      // are also the most recent MAX_CAPTURED_CHARS characters of the whole
+      // stream, so anything held from before this chunk is now stale and is
+      // discarded along with the front of this one.
+      this.chunks = [s.slice(s.length - MAX_CAPTURED_CHARS)]
+      this.size = MAX_CAPTURED_CHARS
+      this.truncated = true
+      return
+    }
     this.chunks.push(s)
     this.size += s.length
-    while (this.size > MAX_CAPTURED_BYTES && this.chunks.length > 1) {
+    while (this.size > MAX_CAPTURED_CHARS && this.chunks.length > 1) {
       this.size -= this.chunks.shift()!.length
       this.truncated = true
     }
@@ -95,15 +127,26 @@ function exec(
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
+    // A throwing `log` must not take down an unattended overnight run —
+    // losing a log line is fine, losing the whole exec because a log
+    // stream closed or a disk filled is not.
+    const safeLog = (c: string): void => {
+      try {
+        opts.log?.(c)
+      } catch {
+        /* a broken logger must not break the run it is only observing */
+      }
+    }
+
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
     child.stdout?.on('data', (c: string) => {
       stdout.push(c)
-      opts.log?.(c)
+      safeLog(c)
     })
     child.stderr?.on('data', (c: string) => {
       stderr.push(c)
-      opts.log?.(c)
+      safeLog(c)
     })
 
     const timer = setTimeout(() => {

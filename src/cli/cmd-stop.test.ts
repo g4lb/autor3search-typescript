@@ -142,6 +142,33 @@ describe('cmdStop', () => {
     expect(await readStop(dir)).toBeNull()
   })
 
+  it('refuses -clear and -force together as a usage error', async () => {
+    const { root, ctx } = await setup()
+    const dir = runDir(root, TAG)
+    captureOutput()
+
+    const code = await cmdStop(ctx, ['-tag', TAG, '-clear', '-force'])
+
+    expect(code).toBe(2)
+    expect(stderr.join('')).toMatch(/-clear and -force are mutually exclusive/)
+    // A rejected usage combination must not write anything -- neither
+    // request nor clear.
+    expect(await readStop(dir)).toBeNull()
+  })
+
+  it('infers -tag from the current run branch when -tag is omitted', async () => {
+    const { ctx } = await setup()
+    // baseline leaves the repo checked out on "autoresearch-typescript/sep6";
+    // every other test in this file passes -tag explicitly, so this is the
+    // only coverage of inferTagFromBranch actually running end to end.
+    captureOutput()
+
+    const code = await cmdStop(ctx, [])
+
+    expect(code).toBe(0)
+    expect(stdout.join('')).toMatch(/stop requested for tag "sep6"/)
+  })
+
   it('-force records force and reports what state the repo is in', async () => {
     const { root, ctx } = await setup()
     const dir = runDir(root, TAG)

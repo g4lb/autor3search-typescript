@@ -182,6 +182,19 @@ describe('cmdStatus', () => {
     expect(text).toMatch(/current branch:\s+main.*not on the run branch/)
   })
 
+  it('infers -tag from the current run branch when -tag is omitted', async () => {
+    const { ctx } = await setup()
+    // baseline leaves the repo checked out on "autoresearch-typescript/sep6";
+    // every other test in this file passes -tag explicitly, so this is the
+    // only coverage of inferTagFromBranch actually running end to end.
+    captureOutput()
+
+    const code = await cmdStatus(ctx, [])
+
+    expect(code).toBe(0)
+    expect(stdout.join('')).toMatch(/tag "sep6"/)
+  })
+
   it('reports the run branch, frozen and measurement commits, and counts by verdict', async () => {
     const { root, ctx } = await setup()
     const head = await headCommit(root)

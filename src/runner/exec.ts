@@ -89,8 +89,17 @@ export class Capture {
  * On Linux a process whose group leader has exited can report ppid 1, and
  * `kill(-1, ...)` means "every process the user may signal" — which in a
  * container is everything. Refusing is strictly better than the alternative.
+ *
+ * Exported: `cli/cmd-stop.ts`'s `stop -force` needs this exact same refusal
+ * to signal the pid recorded in `eval.lock`. That is the same function, not
+ * two views of one enumeration (contrast the lockfile `switch` in
+ * `pm/detect.ts`, which genuinely cannot be imported across a `switch`) --
+ * so the duplication is eliminated by importing this rather than guarded by
+ * a second copy plus a comment. A future edit to the pid-1 refusal (e.g.
+ * hardening it for a new edge case) now cannot diverge between the two call
+ * sites by simply being forgotten in one of them.
  */
-function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
+export function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   if (pid === undefined || pid <= 1) return
   try {
     process.kill(-pid, signal)

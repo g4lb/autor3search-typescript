@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util'
 import { currentBranch, headCommit, shortSha } from '../gitx/git.js'
+import { killGroup } from '../runner/exec.js'
 import { readBaseline } from '../state/baseline.js'
 import { runDir } from '../state/home.js'
 import { readEvalLock } from '../state/lock.js'
@@ -47,29 +48,6 @@ async function inferTagFromBranch(repoRoot: string): Promise<string> {
   return tag
 }
 
-/**
- * Signals a process group, refusing to signal pid 1's group.
- *
- * Mirrors `runner/exec.ts`'s private `killGroup` (not exported, so it
- * cannot be reused directly): on Linux a process whose group leader has
- * exited can report ppid 1, and `kill(-1, ...)` means "every process the
- * user may signal" -- which in a container is everything. Any change to
- * that refusal must be mirrored here.
- */
-function killGroup(pid: number, signal: NodeJS.Signals): void {
-  if (pid <= 1) return
-  try {
-    process.kill(-pid, signal)
-  } catch {
-    // The group is already gone; fall back to the single process.
-    try {
-      process.kill(pid, signal)
-    } catch {
-      /* already dead */
-    }
-  }
-}
-
 async function tryGit<T>(f: () => Promise<T>): Promise<T | null> {
   try {
     return await f()
@@ -103,9 +81,11 @@ function isPidAlive(pid: number): boolean {
  * next verdict, so the in-flight experiment always finishes and is scored.
  * `-clear` cancels a pending request. `-force` additionally signals the pid
  * recorded in `eval.lock` (if any) to abandon the current experiment right
- * now, and then reports the repository state that leaves -- including the
- * exact command that would drop the abandoned commit -- WITHOUT running it.
- * Dropping an agent's work is the human's decision, never this tool's.
+ * now -- using `runner/exec.ts`'s own exported `killGroup`, so the pid-1
+ * refusal lives in exactly one place -- and then reports the repository
+ * state that leaves -- including the exact command that would drop the
+ * abandoned commit -- WITHOUT running it. Dropping an agent's work is the
+ * human's decision, never this tool's.
  */
 export async function cmdStop(ctx: RunCtx, argv: readonly string[]): Promise<number> {
   let tag: string | undefined

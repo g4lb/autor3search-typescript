@@ -97,4 +97,28 @@ describe('main', () => {
     await main(['-C', root, 'init'])
     expect(process.cwd()).toBe(cwdBefore)
   })
+
+  // Ruling 34: a command that only calls its own `cmd*` function directly
+  // (never through `main`) would still pass even if it were never added to
+  // `COMMANDS` -- that is exactly the bug this test exists to catch, so it
+  // must dispatch through `main` itself.
+  it('dispatches "doctor" through main -- registered, not merely implemented', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+
+    const code = await main(['-C', root, 'doctor'])
+
+    expect(code).toBe(0)
+    // Something recognisable from doctor's own output, not just a zero exit
+    // code (which an unknown-command path could also produce by accident).
+    expect(stdout.join('')).toMatch(/can this machine measure reliably/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  it('lists "doctor" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/doctor/)
+  })
 })

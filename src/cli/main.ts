@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { cmdBaseline } from './cmd-baseline.js'
 import { cmdDoctor } from './cmd-doctor.js'
+import { cmdEval } from './cmd-eval.js'
 import { cmdInit } from './cmd-init.js'
 import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
 
 type Command = (ctx: RunCtx, argv: string[]) => Promise<number>
 
 /**
- * The command table. `eval`, `stop` and `report` are later tasks, and
- * until they land an attempt to run them is correctly an "unknown
- * subcommand," not a stub that pretends to work.
+ * The command table. `stop` and `report` are later tasks, and until they
+ * land an attempt to run them is correctly an "unknown subcommand," not a
+ * stub that pretends to work.
  *
  * Ruling 34: a command implemented and tested but never added here is
  * unreachable, yet looks completely healthy from inside its own task's
@@ -24,6 +25,7 @@ export const COMMANDS: Record<string, Command> = {
   init: cmdInit,
   doctor: cmdDoctor,
   baseline: cmdBaseline,
+  eval: cmdEval,
 }
 
 const HELP = `autoresearch-typescript -- autonomous performance optimization for a TypeScript repository
@@ -34,6 +36,7 @@ Commands:
   init      Discover benchmarks and write .autoresearch/config.yaml and program.md
   doctor    Report whether this machine can measure reliably (informational, always exits 0)
   baseline  Freeze tests/benchmarks, pin a worktree at HEAD, install and prove it can measure
+  eval      Run one experiment through the gate chain and report a verdict (0 KEEP, 1 DISCARD, 2 FAIL, 3 CRASH)
 
 Global flags:
   -C <dir>  Run as if invoked from <dir> (resolves that directory's git repository root)

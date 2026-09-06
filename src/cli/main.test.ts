@@ -173,6 +173,41 @@ describe('main', () => {
     expect(stdout.join('')).toMatch(/baseline/)
   })
 
+  // Ruling 34, same reasoning as doctor/baseline above: eval must be proven
+  // reachable through main's own dispatch table, not merely implemented and
+  // tested in its own file.
+  it('dispatches "eval" through main -- registered, not merely implemented', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+    expect(await main(['-C', root, 'init'])).toBe(0)
+    await git(root, ['add', 'program.md', '.gitignore'])
+    await git(root, ['commit', '-q', '-m', 'init'])
+    captureOutput()
+    expect(await main(['-C', root, 'baseline', '-tag', 'sep6'])).toBe(0)
+
+    captureOutput()
+    // No code change since baseline: whatever the statistical outcome (this
+    // does not inject a fake measurer, so it runs the real, tiny demo
+    // benchmark), the point here is only that dispatch reaches cmdEval and
+    // produces a well-formed, single-JSON-object result -- not any
+    // particular verdict.
+    const code = await main(['-C', root, 'eval', '-tag', 'sep6', '--json'])
+
+    expect([0, 1, 2, 3]).toContain(code)
+    const lines = stdout.join('').split('\n').filter((l) => l.length > 0)
+    expect(lines).toHaveLength(1)
+    const parsed = JSON.parse(lines[0] as string) as { status: string; exit_code: number }
+    expect(['keep', 'discard', 'fail', 'crash']).toContain(parsed.status)
+    expect(parsed.exit_code).toBe(code)
+  })
+
+  it('lists "eval" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/eval/)
+  })
+
   // Ruling 34, extended: the mutation evidence for the doctor reachability
   // test also showed that HELP and COMMANDS are two independent strings
   // that can silently disagree -- removing a COMMANDS entry broke dispatch

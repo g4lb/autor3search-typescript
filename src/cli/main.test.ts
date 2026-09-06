@@ -1,10 +1,12 @@
-import { access, mkdtemp } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONFIG_PATH } from '../config/schema.js'
+import { run, ok } from '../runner/exec.js'
+import { STATE_HOME_ENV } from '../state/home.js'
 import { makeDemoRepo } from '../testutil/demo.js'
-import { main } from './main.js'
+import { COMMANDS, main } from './main.js'
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -37,6 +39,28 @@ afterEach(() => {
   stdoutSpy?.mockRestore()
   stderrSpy?.mockRestore()
 })
+
+let stateHomeDir: string
+let originalStateHomeEnv: string | undefined
+
+beforeEach(async () => {
+  originalStateHomeEnv = process.env[STATE_HOME_ENV]
+  // Redirected to a scratch directory so the "baseline" dispatch test below
+  // never touches the real user cache.
+  stateHomeDir = await mkdtemp(path.join(tmpdir(), 'ars-main-state-'))
+  process.env[STATE_HOME_ENV] = stateHomeDir
+})
+
+afterEach(async () => {
+  if (originalStateHomeEnv === undefined) delete process.env[STATE_HOME_ENV]
+  else process.env[STATE_HOME_ENV] = originalStateHomeEnv
+  await rm(stateHomeDir, { recursive: true, force: true })
+})
+
+async function git(cwd: string, args: string[]): Promise<void> {
+  const r = await run('git', args, { cwd, timeoutMs: 60_000 })
+  if (!ok(r)) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
+}
 
 describe('main', () => {
   it('prints the command table and exits 2 with no arguments', async () => {
@@ -120,5 +144,47 @@ describe('main', () => {
     const code = await main(['--help'])
     expect(code).toBe(2)
     expect(stdout.join('')).toMatch(/doctor/)
+  })
+
+  // Ruling 34: same reasoning as the doctor test above -- a command that is
+  // implemented and even fully tested in its own file is not proven
+  // reachable until something dispatches it through `main` itself.
+  it('dispatches "baseline" through main -- registered, not merely implemented', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+    expect(await main(['-C', root, 'init'])).toBe(0)
+    await git(root, ['add', 'program.md', '.gitignore'])
+    await git(root, ['commit', '-q', '-m', 'init'])
+
+    captureOutput()
+    const code = await main(['-C', root, 'baseline', '-tag', 'sep6'])
+
+    expect(code).toBe(0)
+    // Something recognisable from baseline's own success output, not just a
+    // zero exit code.
+    expect(stdout.join('')).toMatch(/baseline "sep6" created at/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  it('lists "baseline" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/baseline/)
+  })
+
+  // Ruling 34, extended: the mutation evidence for the doctor reachability
+  // test also showed that HELP and COMMANDS are two independent strings
+  // that can silently disagree -- removing a COMMANDS entry broke dispatch
+  // while the --help assertion still passed. This closes that gap once,
+  // for every command, rather than costing a per-command test forever.
+  it('every command in COMMANDS is listed in --help, and vice versa', async () => {
+    captureOutput()
+    await main(['--help'])
+    const help = stdout.join('')
+    const commandsSection = help.split('Commands:')[1]?.split('Global flags:')[0] ?? ''
+    const listed = new Set([...commandsSection.matchAll(/^\s{2}(\S+)/gm)].map((m) => m[1]))
+    expect(listed.size).toBeGreaterThan(0)
+    expect(listed).toEqual(new Set(Object.keys(COMMANDS)))
   })
 })

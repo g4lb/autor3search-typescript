@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { cmdBaseline } from './cmd-baseline.js'
 import { cmdDoctor } from './cmd-doctor.js'
 import { cmdInit } from './cmd-init.js'
 import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
@@ -6,9 +7,9 @@ import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
 type Command = (ctx: RunCtx, argv: string[]) => Promise<number>
 
 /**
- * The command table. `baseline`, `eval`, `stop` and `report` are later
- * tasks, and until they land an attempt to run them is correctly an
- * "unknown subcommand," not a stub that pretends to work.
+ * The command table. `eval`, `stop` and `report` are later tasks, and
+ * until they land an attempt to run them is correctly an "unknown
+ * subcommand," not a stub that pretends to work.
  *
  * Ruling 34: a command implemented and tested but never added here is
  * unreachable, yet looks completely healthy from inside its own task's
@@ -16,10 +17,13 @@ type Command = (ctx: RunCtx, argv: string[]) => Promise<number>
  * `--help` would still print successfully, just without it. Every command
  * task must register itself here, and prove it with a test that dispatches
  * through `main`, not one that only calls the command function directly.
+ * Exported (only) so the COMMANDS/HELP invariant test below can compare
+ * this table's keys against what `--help` actually lists.
  */
-const COMMANDS: Record<string, Command> = {
+export const COMMANDS: Record<string, Command> = {
   init: cmdInit,
   doctor: cmdDoctor,
+  baseline: cmdBaseline,
 }
 
 const HELP = `autoresearch-typescript -- autonomous performance optimization for a TypeScript repository
@@ -29,6 +33,7 @@ Usage: autoresearch-typescript [-C <dir>] <command> [flags]
 Commands:
   init      Discover benchmarks and write .autoresearch/config.yaml and program.md
   doctor    Report whether this machine can measure reliably (informational, always exits 0)
+  baseline  Freeze tests/benchmarks, pin a worktree at HEAD, install and prove it can measure
 
 Global flags:
   -C <dir>  Run as if invoked from <dir> (resolves that directory's git repository root)

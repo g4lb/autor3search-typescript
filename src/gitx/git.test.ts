@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -121,20 +121,66 @@ describe('gitx', () => {
     expect(await changedFiles(root, base)).toEqual([])
   })
 
-  // The exact bypass this function exists to prevent: an agent-created
-  // `.gitignore` must not be able to hide arbitrary untracked source from
-  // the scope gate, even though the identical pattern legitimately hides
-  // the harness's OWN gitignored outputs (see the test above). Untracked
-  // discovery is a filesystem walk minus git's tracked set, not
-  // `ls-files --others --exclude-standard`, precisely so this stays true
-  // regardless of what any `.gitignore` on disk says.
-  it('still reports a file hidden behind an agent-created .gitignore', async () => {
+  // The regression the final whole-branch re-review caught: an earlier
+  // version of this function re-derived its OWN ignore-immune untracked-file
+  // list (a filesystem walk minus git's tracked set, with no reference to
+  // `.gitignore` at all), which made it blind to the repository's own
+  // ORDINARY, entirely legitimate ignore rules -- a `.DS_Store`, a `.env`, a
+  // build log, a vendored `lib/` directory would all be reported as
+  // "changed," making `baseline` refuse to run and every `eval` FAIL on a
+  // perfectly ordinary repository. This is the reviewer's own reproduction:
+  // a normal, committed, unmodified `.gitignore` must be trusted, exactly
+  // the way plain `git status` trusts it.
+  it('trusts an ordinary, committed .gitignore for a user\'s own untracked files', async () => {
+    const root = await scratchRepo()
+    await writeFile(path.join(root, '.gitignore'), 'lib/\n.env\n.DS_Store\n*.log\n')
+    await mkdir(path.join(root, 'lib'))
+    await git(root, 'add', '-A')
+    await git(root, 'commit', '-q', '-m', 'add an ordinary gitignore')
+    const base = await headCommit(root)
+
+    await writeFile(path.join(root, '.env'), 'SECRET=1\n')
+    await writeFile(path.join(root, '.DS_Store'), 'noise\n')
+    await writeFile(path.join(root, 'debug.log'), 'noise\n')
+    await writeFile(path.join(root, 'lib', 'a.js'), 'module.exports = {}\n')
+
+    expect(await changedFiles(root, base)).toEqual([])
+  })
+
+  // The exact bypass this function exists to prevent: an agent-created (or
+  // agent-modified) `.gitignore` must not be trusted to hide anything,
+  // unlike the ordinary case above. Rather than re-deriving a whole
+  // ignore-immune untracked-file list (the approach that caused the
+  // regression above), an untracked or modified `.gitignore` is reported as
+  // a violation IN ITS OWN RIGHT -- `--exclude-standard`'s output for this
+  // call is never trusted while the rules it depends on are unverified, so
+  // the eval refuses before whatever the `.gitignore` hides is ever
+  // measured.
+  it('reports a newly-created, untracked .gitignore itself as changed, rather than trust it', async () => {
     const root = await scratchRepo()
     const base = await headCommit(root)
     await mkdir(path.join(root, 'lib'))
     await writeFile(path.join(root, 'lib', '.gitignore'), '*\n')
     await writeFile(path.join(root, 'lib', 'evil.ts'), 'export const evil = 1\n')
-    expect(await changedFiles(root, base)).toEqual(['lib/.gitignore', 'lib/evil.ts'])
+    expect(await changedFiles(root, base)).toEqual(['lib/.gitignore'])
+  })
+
+  it('reports a tracked .gitignore that was MODIFIED since sinceRef as changed', async () => {
+    const root = await scratchRepo()
+    await writeFile(path.join(root, '.gitignore'), 'lib/\n')
+    await mkdir(path.join(root, 'lib'))
+    await git(root, 'add', '-A')
+    await git(root, 'commit', '-q', '-m', 'add gitignore')
+    const base = await headCommit(root)
+
+    // Loosen the ignore rule to newly EXPOSE lib/ -- committed, so `diff`
+    // alone would already catch the .gitignore edit, but the file it now
+    // exposes must not silently rely on that alone either.
+    await writeFile(path.join(root, '.gitignore'), '\n')
+    await writeFile(path.join(root, 'lib', 'evil.ts'), 'export const evil = 1\n')
+
+    const changed = await changedFiles(root, base)
+    expect(changed).toContain('.gitignore')
   })
 
   it('does not double-report a file that was untracked and is now committed', async () => {
@@ -173,6 +219,60 @@ describe('gitx', () => {
     await git(root, 'add', '-A')
     await git(root, 'commit', '-q', '-m', 'newline file')
     expect(await changedFiles(root, base)).toEqual([name])
+  })
+
+  // Priority 2's original fix traded one blind spot for another: `walkRepo`
+  // deliberately never lists a symlink (see its own doc comment), so a
+  // brand-new, untracked symlink -- exactly what Node and `tsc` resolve at
+  // measure time -- was invisible to the untracked-file enumeration built
+  // on top of it. Reported unconditionally here, regardless of whether it
+  // happens to be gitignored: a symlink is content indirection, and a NEW
+  // one is not the kind of thing an ignore rule legitimately needs to hide.
+  it('reports a new, untracked symlink as changed', async () => {
+    const root = await scratchRepo()
+    const base = await headCommit(root)
+    await symlink(path.join(root, 'a.ts'), path.join(root, 'link.ts'))
+
+    expect(await changedFiles(root, base)).toEqual(['link.ts'])
+  })
+
+  it('does not report an already-tracked symlink whose target string is unchanged', async () => {
+    const root = await scratchRepo()
+    await symlink(path.join(root, 'a.ts'), path.join(root, 'link.ts'))
+    await git(root, 'add', '-A')
+    await git(root, 'commit', '-q', '-m', 'add a tracked symlink')
+    const base = await headCommit(root)
+
+    expect(await changedFiles(root, base)).toEqual([])
+  })
+
+  // `git update-index --assume-unchanged` (or `--skip-worktree`) tells git
+  // to stop comparing a tracked file against the working tree at all, so a
+  // plain `git diff <ref>` reports no difference even after the file's
+  // on-disk content is completely rewritten -- a complete, one-command
+  // bypass of everything `diff --name-only` alone would otherwise catch.
+  it('reports a tracked file flagged --assume-unchanged as changed, even though diff cannot see it', async () => {
+    const root = await scratchRepo()
+    const base = await headCommit(root)
+    await git(root, 'update-index', '--assume-unchanged', 'a.ts')
+    await writeFile(path.join(root, 'a.ts'), 'export const a = 999 // tampered\n')
+
+    // Positive control: prove the assume-unchanged bit really does blind
+    // plain `git diff` to this edit, so the assertion below is testing
+    // `changedFiles`'s own detection and not something `diff` already caught.
+    const plainDiff = await run('git', ['diff', '--name-only', base], { cwd: root, timeoutMs: 30_000 })
+    expect(plainDiff.stdout.trim()).toBe('')
+
+    expect(await changedFiles(root, base)).toEqual(['a.ts'])
+  })
+
+  it('reports a tracked file flagged --skip-worktree as changed', async () => {
+    const root = await scratchRepo()
+    const base = await headCommit(root)
+    await git(root, 'update-index', '--skip-worktree', 'a.ts')
+    await writeFile(path.join(root, 'a.ts'), 'export const a = 999 // tampered\n')
+
+    expect(await changedFiles(root, base)).toEqual(['a.ts'])
   })
 
   it('creates a branch and reports it as current', async () => {

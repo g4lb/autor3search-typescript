@@ -28,24 +28,53 @@ export function classify(rel: string): FileKind {
   return 'source'
 }
 
-/** Every file in the repository, repo-relative with POSIX separators. */
-export async function walkRepo(root: string): Promise<string[]> {
-  const out: string[] = []
+/**
+ * Walks the repository once, collecting regular files and symlinks
+ * separately. Shared by `walkRepo` and `listSymlinks` so the two never
+ * silently diverge on which directories are skipped.
+ */
+async function walkAll(root: string): Promise<{ files: string[]; symlinks: string[] }> {
+  const files: string[] = []
+  const symlinks: string[] = []
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(path.join(root, dir), { withFileTypes: true })
     for (const e of entries) {
       const rel = dir === '' ? e.name : `${dir}/${e.name}`
+      if (e.isSymbolicLink()) {
+        // Recorded, never followed: a symlink is never walked INTO
+        // (whether it points to a file or a directory), so its target's
+        // contents never appear in `files` regardless of where they live.
+        symlinks.push(rel)
+        continue
+      }
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue
         await walk(rel)
       } else if (e.isFile()) {
-        out.push(rel)
+        files.push(rel)
       }
-      // Symlinks are deliberately neither followed nor listed.
     }
   }
   await walk('')
-  return out.sort()
+  return { files: files.sort(), symlinks: symlinks.sort() }
+}
+
+/** Every regular file in the repository, repo-relative with POSIX separators. */
+export async function walkRepo(root: string): Promise<string[]> {
+  return (await walkAll(root)).files
+}
+
+/**
+ * Every symlink in the repository (whatever it points to), repo-relative
+ * with POSIX separators, not followed.
+ *
+ * Exists for `gitx/git.ts`'s `changedFiles`: an untracked symlink is
+ * invisible to `walkRepo` by design (see above) but is exactly what Node
+ * and `tsc` resolve at measure time, so the scope/clean-tree gates must see
+ * it as a change even though the ordinary file walk never will.
+ */
+export async function listSymlinks(root: string): Promise<string[]> {
+  return (await walkAll(root)).symlinks
 }
 
 /** Every file that must be frozen at baseline. */

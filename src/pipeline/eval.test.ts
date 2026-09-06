@@ -192,12 +192,15 @@ describe('runEval: gate order', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
-  // The scope-gate escape from the final whole-branch review (Priority 2):
-  // an agent-created `.gitignore` must not be able to hide an untracked file
-  // outside `scope` from `changedFiles`. Left uncommitted AND unstaged --
-  // exactly the shape of the exploit -- to prove the gate does not depend on
-  // `git add` either.
-  it('gate 1: still rejects a file hidden behind an agent-created .gitignore', async () => {
+  // The scope-gate escape from the final whole-branch review (Priority 2),
+  // and its own fix (`gitx/git.ts`'s `changedFiles` doc comment): an
+  // agent-created, untracked `.gitignore` is reported as a change IN ITS
+  // OWN RIGHT, refusing before whatever it hides is ever trusted --
+  // `--exclude-standard`'s output is never relied on while the rules it
+  // depends on are unverified, so this refuses on the `.gitignore` itself,
+  // not on `evil.ts`. Left uncommitted AND unstaged -- exactly the shape of
+  // the exploit -- to prove the gate does not depend on `git add` either.
+  it('gate 1: still rejects a tree with an agent-created .gitignore, before whatever it hides is trusted', async () => {
     const { root, ctx } = await setup()
     await mkdir(path.join(root, 'lib'), { recursive: true })
     await writeFile(path.join(root, 'lib', '.gitignore'), '*\n', 'utf8')
@@ -208,8 +211,42 @@ describe('runEval: gate order', () => {
 
     expect(outcome.verdict.status).toBe('fail')
     expect(outcome.failedGate).toBe('scope')
-    expect(outcome.message).toMatch(/lib\/evil\.ts/)
+    expect(outcome.message).toMatch(/lib\/\.gitignore/)
     expect(spy).not.toHaveBeenCalled()
+  })
+
+  // A normal, committed .gitignore covering the user's own ordinary
+  // untracked files (a build log, an editor artifact, ...) must not trip
+  // the scope gate. This is the counterpart to the test above -- proof the
+  // fix distinguishes "an ordinary ignore rule" from "an unverified one,"
+  // rather than distrusting `.gitignore` altogether.
+  it('gate 1: does NOT reject an ordinary, committed, unmodified .gitignore covering the user\'s own files', async () => {
+    // The extra ignore rule must already be part of `frozenCommit` -- gate 1
+    // diffs against it forever, so adding the rule AFTER baseline would
+    // itself be an (entirely legitimate, but irrelevant to this test)
+    // out-of-scope change to .gitignore. Built manually rather than via
+    // `setup()`, which commits before this test gets a chance to extend
+    // the generated .gitignore first.
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    expect(await cmdInit(ctx, [])).toBe(0)
+    await writeFile(
+      path.join(root, '.gitignore'),
+      `${await readFile(path.join(root, '.gitignore'), 'utf8')}\n*.local.log\n`,
+      'utf8',
+    )
+    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
+    await git(root, ['commit', '-q', '-m', 'init, with an ordinary extra gitignore rule'])
+    expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
+
+    // No commit made since baseline -- irrelevant here: whatever gate
+    // eventually rejects this (if any), it must not be "scope."
+    await writeFile(path.join(root, 'debug.local.log'), 'noise\n', 'utf8')
+    const spy = vi.fn(constMeasureOne)
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(outcome.failedGate).not.toBe('scope')
   })
 
   it('gate 2: fails when .autoresearch/config.yaml changed since baseline', async () => {

@@ -24,7 +24,7 @@ describe('countWords', () => {
     )
   })
 
-  it('ignores digits-only and empty fields correctly', () => {
+  it('counts a digits-only word like any other, and does not choke on the empty field a double space produces', () => {
     assert.equal(countWords('a  1 b').get('1'), 1)
   })
 })

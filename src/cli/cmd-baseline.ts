@@ -22,11 +22,9 @@ import { detect } from '../pm/detect.js'
 import { ok, run, runShell, tail } from '../runner/exec.js'
 import { writeBaseline, type BaselineRecord } from '../state/baseline.js'
 import { runDir } from '../state/home.js'
+import { BRANCH_PREFIX, FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
 import type { RunCtx } from './runctx.js'
 
-const BRANCH_PREFIX = 'autoresearch-typescript/'
-const WORKTREE_DIRNAME = 'baseline-worktree'
-const FROZEN_DIRNAME = 'frozen'
 const CHECKOUT_TIMEOUT_MS = 60_000
 
 /**

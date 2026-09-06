@@ -1,10 +1,10 @@
 import { appendFileSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
-import { currentBranch } from '../gitx/git.js'
 import { runEval, type EvalOutcome } from '../pipeline/eval.js'
 import { killActiveChildren } from '../runner/exec.js'
 import { runDir } from '../state/home.js'
 import { lockPath } from '../state/lock.js'
+import { inferTagFromBranch } from '../state/runnaming.js'
 import { EXIT_CODES } from '../verdict/verdict.js'
 import type { RunCtx } from './runctx.js'
 
@@ -38,14 +38,6 @@ export function installSigtermHandler(dir: string): () => void {
   return () => process.off('SIGTERM', onSigterm)
 }
 
-/**
- * Duplicated from `cmd-baseline.ts` rather than imported -- see the same
- * note in `pipeline/eval.ts`. Load-bearing: this must match the prefix
- * `cmd-baseline.ts` uses when it creates the run branch, or `-tag`
- * inference from the current branch silently stops working.
- */
-const BRANCH_PREFIX = 'autoresearch-typescript/'
-
 function fail(message: string): number {
   process.stderr.write(`error: ${message}\n`)
   return 2
@@ -53,27 +45,6 @@ function fail(message: string): number {
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-/** `-tag`'s default: the tag encoded in the current run branch's name. */
-async function inferTagFromBranch(repoRoot: string): Promise<string> {
-  let branch: string
-  try {
-    branch = await currentBranch(repoRoot)
-  } catch (e) {
-    throw new Error(`-tag was not given, and the current branch could not be determined: ${messageOf(e)}`)
-  }
-  if (!branch.startsWith(BRANCH_PREFIX)) {
-    throw new Error(
-      `-tag was not given, and the current branch (${JSON.stringify(branch)}) is not a run branch ` +
-        `(expected "${BRANCH_PREFIX}<tag>"). Pass -tag <tag> explicitly.`,
-    )
-  }
-  const tag = branch.slice(BRANCH_PREFIX.length)
-  if (tag === '') {
-    throw new Error(`-tag was not given, and the current branch (${JSON.stringify(branch)}) names no tag`)
-  }
-  return tag
 }
 
 interface JsonBenchmark {

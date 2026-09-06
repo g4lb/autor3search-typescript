@@ -146,6 +146,25 @@ describe('loadRows', () => {
     expect(dataLine.split('\t')[4]).not.toMatch(/[\t\r\n]/)
   })
 
+  // Deferred minor #4 (Task 15): an earlier fix replaced a test that
+  // covered sanitization of BOTH `status` and `reason` with one that only
+  // ports the `status` half, silently dropping coverage that `reason` is
+  // sanitized too -- latent coverage loss, since `sanitize()` itself is
+  // unchanged and still applied to every field, but exactly the "fix
+  // quietly deletes the test it broke" pattern. Mirrors the `status` test
+  // immediately above, for `reason`.
+  it('sanitizes a tab or newline injected into reason before it ever reaches disk', async () => {
+    const dir = await tmp()
+    const file = path.join(dir, RESULTS_PATH)
+    await appendRow(
+      file,
+      row({ status: 'discard', reason: 'no_sig\tnificant_improvement\n' as Row['reason'] }),
+    )
+    const text = await readFile(file, 'utf8')
+    const dataLine = text.split('\n').filter((l) => l.length > 0)[1] ?? ''
+    expect(dataLine.split('\t')[5]).not.toMatch(/[\t\r\n]/)
+  })
+
   it('leaves a short description untouched', async () => {
     const dir = await tmp()
     const file = path.join(dir, RESULTS_PATH)

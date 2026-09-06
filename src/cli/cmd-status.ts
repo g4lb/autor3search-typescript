@@ -6,25 +6,10 @@ import { loadRows, summarize } from '../results/results.js'
 import { readBaseline } from '../state/baseline.js'
 import { runDir } from '../state/home.js'
 import { readEvalLock } from '../state/lock.js'
+import { BRANCH_PREFIX, WORKTREE_DIRNAME, inferTagFromBranch } from '../state/runnaming.js'
 import { readStop } from '../state/stop.js'
 import type { RunCtx } from './runctx.js'
 import { formatCumulativeSpeedup } from './speedup.js'
-
-/**
- * Duplicated from cmd-baseline.ts rather than imported -- see the identical
- * note in cmd-eval.ts. Must match the prefix baseline uses when it creates
- * the run branch, or `-tag` inference from the current branch silently
- * stops working.
- */
-const BRANCH_PREFIX = 'autoresearch-typescript/'
-
-/**
- * Duplicated from cmd-baseline.ts, which keeps it as a module-private
- * constant -- see the identical note in pipeline/eval.ts. Must match where
- * `baseline` actually pins its worktree, or `status` would report the
- * wrong path (or "MISSING") for a worktree that is really there.
- */
-const WORKTREE_DIRNAME = 'baseline-worktree'
 
 const STATUSES = ['keep', 'discard', 'fail', 'crash'] as const
 
@@ -44,30 +29,6 @@ async function exists(p: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-/**
- * `-tag`'s default: the tag encoded in the current run branch's name.
- * Duplicated from cmd-eval.ts -- see its doc comment for why.
- */
-async function inferTagFromBranch(repoRoot: string): Promise<string> {
-  let branch: string
-  try {
-    branch = await currentBranch(repoRoot)
-  } catch (e) {
-    throw new Error(`-tag was not given, and the current branch could not be determined: ${messageOf(e)}`)
-  }
-  if (!branch.startsWith(BRANCH_PREFIX)) {
-    throw new Error(
-      `-tag was not given, and the current branch (${JSON.stringify(branch)}) is not a run branch ` +
-        `(expected "${BRANCH_PREFIX}<tag>"). Pass -tag <tag> explicitly.`,
-    )
-  }
-  const tag = branch.slice(BRANCH_PREFIX.length)
-  if (tag === '') {
-    throw new Error(`-tag was not given, and the current branch (${JSON.stringify(branch)}) names no tag`)
-  }
-  return tag
 }
 
 /**

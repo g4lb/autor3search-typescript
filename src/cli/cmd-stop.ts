@@ -4,16 +4,9 @@ import { killGroup } from '../runner/exec.js'
 import { readBaseline } from '../state/baseline.js'
 import { runDir } from '../state/home.js'
 import { readEvalLock } from '../state/lock.js'
+import { inferTagFromBranch } from '../state/runnaming.js'
 import { clearStop, requestStop } from '../state/stop.js'
 import type { RunCtx } from './runctx.js'
-
-/**
- * Duplicated from cmd-baseline.ts rather than imported -- see the identical
- * note in cmd-eval.ts. Must match the prefix baseline uses when it creates
- * the run branch, or `-tag` inference from the current branch silently
- * stops working.
- */
-const BRANCH_PREFIX = 'autoresearch-typescript/'
 
 function fail(message: string): number {
   process.stderr.write(`error: ${message}\n`)
@@ -22,30 +15,6 @@ function fail(message: string): number {
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-/**
- * `-tag`'s default: the tag encoded in the current run branch's name.
- * Duplicated from cmd-eval.ts -- see its doc comment for why.
- */
-async function inferTagFromBranch(repoRoot: string): Promise<string> {
-  let branch: string
-  try {
-    branch = await currentBranch(repoRoot)
-  } catch (e) {
-    throw new Error(`-tag was not given, and the current branch could not be determined: ${messageOf(e)}`)
-  }
-  if (!branch.startsWith(BRANCH_PREFIX)) {
-    throw new Error(
-      `-tag was not given, and the current branch (${JSON.stringify(branch)}) is not a run branch ` +
-        `(expected "${BRANCH_PREFIX}<tag>"). Pass -tag <tag> explicitly.`,
-    )
-  }
-  const tag = branch.slice(BRANCH_PREFIX.length)
-  if (tag === '') {
-    throw new Error(`-tag was not given, and the current branch (${JSON.stringify(branch)}) names no tag`)
-  }
-  return tag
 }
 
 async function tryGit<T>(f: () => Promise<T>): Promise<T | null> {

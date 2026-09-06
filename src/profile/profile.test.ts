@@ -123,6 +123,19 @@ describe('profileBenchmark', () => {
 
     const top5 = result.hotFrames.slice(0, 5).map((f) => f.functionName)
     expect(top5).toContain('countWords')
+
+    // Deferred minor #14 (Task 21, "self-disclosed by the implementer"):
+    // this only proved countWords APPEARS in the top 5, not that it ranks
+    // #1 -- the actual empirical claim (README: ~94% of self time). A
+    // regression pushing it from #1 to #4, with self time misattributed
+    // elsewhere, would still have passed. hotFrames is sorted descending by
+    // selfTimeUs (see parseCpuProfile), so [0] is the rank-#1 frame; the
+    // percentage threshold is generous (>50%, not ~94%) to stay robust
+    // against real-machine profiling noise while still being a real pin,
+    // not merely "appears somewhere."
+    expect(result.hotFrames[0]?.functionName).toBe('countWords')
+    const countWordsFrame = result.hotFrames[0]!
+    expect(countWordsFrame.selfTimeUs / result.totalSelfUs).toBeGreaterThan(0.5)
   }, 30_000)
 
   it('drops node: and empty-url frames from the demo benchmark profile', async () => {

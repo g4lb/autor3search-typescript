@@ -284,6 +284,44 @@ describe('readChildResult', () => {
     expect(r.error).toMatch(/malformed/i)
   })
 
+  // Deferred item, reclassified from "documented limitation" to defect by
+  // the final whole-branch review: parseBenchResult previously validated
+  // only `ok` and `id` before casting the rest of the object straight to
+  // BenchResult. A SIGKILL mid-writeFile can, unlike the truncated-JSON case
+  // above, leave a document that is SYNTACTICALLY COMPLETE (e.g. an
+  // atomic-rename race landing between two writes) but missing or garbling
+  // a field inside it -- `ok:true` with `nsPerOp` absent parses to
+  // `undefined`, which previously reached the statistics layer looking like
+  // a legitimate measurement rather than a visible failure.
+  it('reports ok:false when ok:true is missing its nsPerOp field entirely', async () => {
+    const dir = await tmp()
+    const outFile = path.join(dir, 'result.json')
+    await writeFile(outFile, JSON.stringify({ ok: true, id: 'x', iterations: 1, batches: 1, elapsedMs: 1, sinkType: 'number' }))
+
+    const r = await readChildResult(outFile, 'x', fakeExec, 30_000)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toMatch(/malformed/i)
+    expect(r.error).toMatch(/nsPerOp/)
+  })
+
+  it.each([
+    ['NaN written as null', null],
+    ['a negative number', -1],
+    ['zero', 0],
+    ['a string', '1.5'],
+  ])('reports ok:false when ok:true carries an invalid nsPerOp (%s)', async (_label, badValue) => {
+    const dir = await tmp()
+    const outFile = path.join(dir, 'result.json')
+    await writeFile(
+      outFile,
+      JSON.stringify({ ok: true, id: 'x', nsPerOp: badValue, iterations: 1, batches: 1, elapsedMs: 1, sinkType: 'number' }),
+    )
+
+    const r = await readChildResult(outFile, 'x', fakeExec, 30_000)
+    expect(r.ok).toBe(false)
+  })
+
   it('reports ok:false naming the timeout when --out is missing because the child never wrote it', async () => {
     const dir = await tmp()
     const outFile = path.join(dir, 'result.json') // never written

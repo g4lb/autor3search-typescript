@@ -51,20 +51,9 @@ import { readBaseline, writeBaseline, type BaselineRecord } from '../state/basel
 import { acquireEvalLock } from '../state/lock.js'
 import { runDir } from '../state/home.js'
 import { readStop } from '../state/stop.js'
+import { FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
 import { ok, runShell, tail } from '../runner/exec.js'
 import { decide, type Verdict } from '../verdict/verdict.js'
-
-/**
- * The baseline worktree/frozen-snapshot directory names, duplicated from
- * `cmd-baseline.ts` rather than imported from it. `cmd-baseline.ts` is
- * already-shipped (task 18) code this task must not modify, and it keeps
- * those two names as module-private constants -- so this is the only way
- * for `eval` to agree with `baseline` on where the worktree and frozen
- * snapshot live without editing that file. Both names are load-bearing
- * across the two modules; a change to either must be made in both places.
- */
-const WORKTREE_DIRNAME = 'baseline-worktree'
-const FROZEN_DIRNAME = 'frozen'
 
 export type GateName =
   /** No baseline for this tag, or the config file itself could not be loaded at all. */

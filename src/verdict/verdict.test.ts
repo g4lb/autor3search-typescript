@@ -85,6 +85,47 @@ describe('decide', () => {
     expect(decide({ ...BASE, deltas }).status).toBe('keep')
   })
 
+  // Deferred minor #3 (Task 14): the regression guard uses a strict `>`
+  // (`d.pctChange > maxRegressPct`), so a regression of EXACTLY the
+  // configured cap must be tolerated, not rejected -- previously answered
+  // only by code inspection.
+  it('tolerates a significant regression of EXACTLY max_regress_pct (the guard is strict >, not >=)', () => {
+    const deltas = [
+      d({ name: 'a', candNs: 50, pctChange: -50, p: 0.0001, significant: true }),
+      d({ name: 'b', candNs: 105, pctChange: BASE.maxRegressPct, p: 0.001, significant: true }),
+    ]
+    const v = decide({ ...BASE, deltas })
+    expect(v.status).toBe('keep')
+    expect(v.regressions).toEqual([])
+  })
+
+  it('rejects a significant regression one hair past max_regress_pct', () => {
+    const deltas = [
+      d({ name: 'a', candNs: 50, pctChange: -50, p: 0.0001, significant: true }),
+      d({ name: 'b', candNs: 105.01, pctChange: BASE.maxRegressPct + 0.01, p: 0.001, significant: true }),
+    ]
+    const v = decide({ ...BASE, deltas })
+    expect(v.status).toBe('discard')
+    expect(v.reason).toBe('significant_regression')
+  })
+
+  // Deferred minor #3 continued: `decide`'s own boundary validation accepts
+  // `p in [0, 1]` inclusive -- `p` of exactly 0 or exactly 1 must not be
+  // rejected as "out of range." This was the specific over-strictness
+  // concern raised at the time and, until now, answered only by inspection.
+  it('accepts a delta with p exactly 0 (the boundary is inclusive, not exclusive)', () => {
+    const deltas = [d({ name: 'a', candNs: 50, pctChange: -50, p: 0, significant: true })]
+    expect(() => decide({ ...BASE, deltas })).not.toThrow()
+    expect(decide({ ...BASE, deltas }).status).toBe('keep')
+  })
+
+  it('accepts a delta with p exactly 1 (the boundary is inclusive, not exclusive)', () => {
+    const deltas = [d({ name: 'a', p: 1, significant: false })]
+    const v = decide({ ...BASE, deltas })
+    expect(v.status).toBe('discard')
+    expect(v.reason).toBe('no_significant_improvement')
+  })
+
   it('warns when no KEEP was reachable at this round count', () => {
     // 7 benchmarks at 5 rounds: corrected alpha 0.00714 is below the exact
     // test's floor of 2/C(10,5) = 0.00794, so nothing could ever KEEP.

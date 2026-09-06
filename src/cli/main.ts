@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { cmdInit } from './cmd-init.js'
-import { resolveCtx, type RunCtx } from './runctx.js'
+import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
 
 type Command = (ctx: RunCtx, argv: string[]) => Promise<number>
 
@@ -45,15 +45,11 @@ function printHelp(): void {
  */
 export async function main(argv: string[]): Promise<number> {
   try {
-    let rest = argv
-    if (rest[0] === '-C') {
-      if (rest[1] === undefined) {
-        process.stderr.write('error: -C requires a directory argument\n')
-        return 2
-      }
-      rest = rest.slice(2)
-    }
-
+    // The same `splitDashC` that `resolveCtx` uses below: one implementation
+    // of "-C is only recognized as the leading token," so this and
+    // `resolveCtx` cannot silently drift apart into two different parsings
+    // of the same flag.
+    const { rest } = splitDashC(argv)
     const [name, ...commandArgv] = rest
     if (name === undefined || name === '--help' || name === '-h') {
       printHelp()

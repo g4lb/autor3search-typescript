@@ -297,7 +297,13 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
           'a change is measured. Add a "test" script and run init again.',
       )
     }
-    const testCommand = `${detected.pm} test`
+    // `run` is load-bearing, not decoration: `bun test` is a reserved Bun
+    // subcommand that invokes Bun's own built-in test runner rather than
+    // falling through to the package.json "test" script the way `npm test`,
+    // `pnpm test` and `yarn test` all do. `<pm> run test` invokes the actual
+    // package script uniformly on all four managers, so it is used
+    // everywhere rather than special-casing bun (Ruling 33).
+    const testCommand = `${detected.pm} run test`
     const buildCommand = scripts.build ? `${detected.pm} run build` : ''
     const hasTsconfig = await exists(path.join(ctx.repoRoot, 'tsconfig.json'))
     const typecheckCommand = hasTsconfig ? `${typecheckRunner(detected.pm)} tsc --noEmit` : ''
@@ -313,6 +319,13 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
     await mkdir(path.dirname(ctx.configPath), { recursive: true })
     await writeFile(ctx.configPath, renderConfigYaml(cfg), 'utf8')
 
+    // Round-trip guard, immediately after writing: a config init itself
+    // cannot load back is a bug that would otherwise only surface at the
+    // user's first eval. Checked here, before program.md or .gitignore are
+    // touched, so "every refusal happens before anything [else] is written"
+    // stays true even on this defensive path.
+    await loadConfig(ctx.configPath)
+
     // 7. copy templates/program.md, substituting the benchmark list and tag.
     const template = await readFile(path.join(templatesDir(), 'program.md'), 'utf8')
     let runTag = 'this-branch'
@@ -327,10 +340,6 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
 
     // 8. append gitignore entries.
     await ensureGitignore(ctx.repoRoot)
-
-    // Round-trip guard: a config init itself cannot load back is a bug that
-    // would otherwise only surface at the user's first eval.
-    await loadConfig(ctx.configPath)
 
     // 9. report what happened and what to do next.
     process.stdout.write('discovered benchmarks:\n')

@@ -115,19 +115,35 @@ describe('cmdInit', () => {
     expect(code).toBe(0)
 
     const cfg = await loadConfig(path.join(root, CONFIG_PATH))
-    // The demo fixture is detected as npm (package-lock.json), so "npm test"
-    // is correct here -- but it is *derived* from the detected pm, not
-    // hardcoded: see the pnpm test below for the case where that matters.
-    expect(cfg.testCommand).toBe('npm test')
+    // The demo fixture is detected as npm (package-lock.json), so
+    // "npm run test" is correct here -- but it is *derived* from the
+    // detected pm, not hardcoded: see the it.each below, which is what
+    // would have caught the "bun test" bug (Ruling 33) that this single
+    // npm case could not.
+    expect(cfg.testCommand).toBe('npm run test')
   })
 
-  it('derives test_command from pnpm, not npm, when pnpm is the detected package manager', async () => {
-    // Ruling 4: every command must be derived from the DETECTED package
-    // manager. A repo pinned to pnpm given "npm test" either fails outright
-    // or resolves dependencies differently than its own lockfile promises.
+  // Ruling 4, superseded in part by Ruling 33: every command must be derived
+  // from the DETECTED package manager, and the correctness gate must
+  // actually invoke the repository's own "test" package script on all four
+  // managers. `<pm> test` looked right and passed review, but `bun test` is
+  // a reserved Bun subcommand for Bun's own built-in test runner -- it does
+  // NOT fall through to the package.json script the way `npm test`, `pnpm
+  // test` and `yarn test` do, so a bun-detected repo would silently run the
+  // wrong thing (or report false success if Bun's runner finds nothing to
+  // run). `<pm> run test` invokes the actual package script uniformly on
+  // all four, so that is what's used and tested here for every manager --
+  // this it.each is the coverage gap that hid the bug: only npm (via the
+  // demo fixture, implicitly) and pnpm were exercised before.
+  it.each([
+    { pm: 'npm', lockfile: 'package-lock.json', lockfileBody: '{}' },
+    { pm: 'pnpm', lockfile: 'pnpm-lock.yaml', lockfileBody: '' },
+    { pm: 'yarn', lockfile: 'yarn.lock', lockfileBody: '' },
+    { pm: 'bun', lockfile: 'bun.lock', lockfileBody: '' },
+  ])('derives test_command and build_command as "$pm run ..." for $pm', async ({ pm, lockfile, lockfileBody }) => {
     const root = await plainRepo({
       'package.json': JSON.stringify({ name: 'x', scripts: { test: 't', build: 'b' } }),
-      'pnpm-lock.yaml': '',
+      [lockfile]: lockfileBody,
       'src/foo.bench.ts': 'export function benchFoo() { return 1 }\n',
     })
     captureOutput()
@@ -136,8 +152,8 @@ describe('cmdInit', () => {
     expect(code).toBe(0)
 
     const cfg = await loadConfig(path.join(root, CONFIG_PATH))
-    expect(cfg.testCommand).toBe('pnpm test')
-    expect(cfg.buildCommand).toBe('pnpm run build')
+    expect(cfg.testCommand).toBe(`${pm} run test`)
+    expect(cfg.buildCommand).toBe(`${pm} run build`)
   })
 
   it('leaves typecheck_command empty and warns when there is no tsconfig.json', async () => {
@@ -155,40 +171,31 @@ describe('cmdInit', () => {
     expect(cfg.typecheckCommand).toBe('')
   })
 
-  it('derives a non-empty typecheck_command through the detected pm when tsconfig.json exists', async () => {
-    const root = await plainRepo({
-      'package.json': JSON.stringify({ name: 'x', scripts: { test: 't' } }),
-      'package-lock.json': '{}',
-      'tsconfig.json': '{}',
-      'src/foo.bench.ts': 'export function benchFoo() { return 1 }\n',
-    })
-    captureOutput()
+  // Ruling 4's per-manager typecheck runner table, exercised for all four
+  // managers -- npx / pnpm exec / yarn exec / bunx respectively.
+  it.each([
+    { pm: 'npm', lockfile: 'package-lock.json', lockfileBody: '{}', wantRunner: 'npx' },
+    { pm: 'pnpm', lockfile: 'pnpm-lock.yaml', lockfileBody: '', wantRunner: 'pnpm exec' },
+    { pm: 'yarn', lockfile: 'yarn.lock', lockfileBody: '', wantRunner: 'yarn exec' },
+    { pm: 'bun', lockfile: 'bun.lock', lockfileBody: '', wantRunner: 'bunx' },
+  ])(
+    'derives typecheck_command as "$wantRunner tsc --noEmit" for $pm when tsconfig.json exists',
+    async ({ lockfile, lockfileBody, wantRunner }) => {
+      const root = await plainRepo({
+        'package.json': JSON.stringify({ name: 'x', scripts: { test: 't' } }),
+        [lockfile]: lockfileBody,
+        'tsconfig.json': '{}',
+        'src/foo.bench.ts': 'export function benchFoo() { return 1 }\n',
+      })
+      captureOutput()
 
-    const code = await cmdInit(ctxFor(root), [])
-    expect(code).toBe(0)
+      const code = await cmdInit(ctxFor(root), [])
+      expect(code).toBe(0)
 
-    const cfg = await loadConfig(path.join(root, CONFIG_PATH))
-    expect(cfg.typecheckCommand).toBe('npx tsc --noEmit')
-  })
-
-  it('derives the typecheck runner through pnpm exec, not npx, on a pnpm repo', async () => {
-    // Ruling 4 again, specifically for the typecheck runner: `npx` on a pnpm
-    // repo either fails (no npx-visible install) or resolves a different
-    // typescript than the one the pnpm lockfile actually pins.
-    const root = await plainRepo({
-      'package.json': JSON.stringify({ name: 'x', scripts: { test: 't' } }),
-      'pnpm-lock.yaml': '',
-      'tsconfig.json': '{}',
-      'src/foo.bench.ts': 'export function benchFoo() { return 1 }\n',
-    })
-    captureOutput()
-
-    const code = await cmdInit(ctxFor(root), [])
-    expect(code).toBe(0)
-
-    const cfg = await loadConfig(path.join(root, CONFIG_PATH))
-    expect(cfg.typecheckCommand).toBe('pnpm exec tsc --noEmit')
-  })
+      const cfg = await loadConfig(path.join(root, CONFIG_PATH))
+      expect(cfg.typecheckCommand).toBe(`${wantRunner} tsc --noEmit`)
+    },
+  )
 
   it('refuses to overwrite an existing config without -force', async () => {
     const root = await makeDemoRepo()
@@ -304,7 +311,11 @@ describe('cmdInit', () => {
     const programMd = await readFile(path.join(root, 'program.md'), 'utf8')
     expect(programMd).not.toMatch(/\{\{BENCHMARKS\}\}/)
     expect(programMd).not.toMatch(/\{\{RUN_TAG\}\}/)
-    expect(programMd).toMatch(/main/) // makeDemoRepo commits on branch "main"
+    // Assert against the actual rendered context line, not a bare /main/:
+    // the word "remain" appears elsewhere in the static template text, so
+    // /main/ alone matches unconditionally regardless of whether
+    // substitution ran, was broken, or never happened at all.
+    expect(programMd).toMatch(/\[exp <n> \| main \| vs <measure_commit> \|/)
   })
 
   it('also accepts the flag as --force (double dash)', async () => {
@@ -351,7 +362,7 @@ describe('cmdInit end-to-end against the demo fixture', () => {
     captureOutput()
     expect(await cmdInit(ctxFor(root), [])).toBe(0)
     const cfg = await loadConfig(path.join(root, CONFIG_PATH))
-    expect(cfg.testCommand).toBe('npm test')
+    expect(cfg.testCommand).toBe('npm run test')
 
     if (process.env['CI_SKIP_INSTALL'] === '1') return
     const install = await run('npm', ['ci', '--no-audit', '--no-fund'], { cwd: root, timeoutMs: 120_000 })

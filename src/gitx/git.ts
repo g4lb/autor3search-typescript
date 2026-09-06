@@ -11,6 +11,32 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return r.stdout.trim()
 }
 
+/**
+ * Like `git`, but returns stdout untrimmed.
+ *
+ * `.trim()` is safe for the scalar callers (`repoRoot`, `headCommit`,
+ * `currentBranch`, ...), which only ever get one shell-wrapped value back.
+ * It is NOT safe for a `-z` NUL-separated list: `String.prototype.trim`
+ * strips leading ASCII whitespace, and a leading space (0x20) sorts before
+ * any letter in git's output — so a repo-relative path that legitimately
+ * starts with a space (e.g. a directory named `" src"`) would have that
+ * space clipped from the *first* entry every time, silently turning
+ * `" src/evil.ts"` into `"src/evil.ts"`. Under a scope gate that allowlists
+ * `src/**`, that reported path is in scope while the real file is not —
+ * the same "name a file to bypass the gate" class `-z` itself exists to
+ * prevent, reintroduced one layer up by an over-eager trim. `-z` and NUL
+ * splitting still take care of the trailing edge: `trim()` does not treat
+ * `\0` as whitespace, so it never eats the sentinel a caller's split relies
+ * on.
+ */
+async function gitRaw(cwd: string, args: string[]): Promise<string> {
+  const r = await run('git', args, { cwd, timeoutMs: TIMEOUT_MS })
+  if (!ok(r)) {
+    throw new Error(`git ${args.join(' ')} failed in ${cwd} (exit ${r.exitCode}): ${r.stderr.trim()}`)
+  }
+  return r.stdout
+}
+
 export async function repoRoot(dir: string): Promise<string> {
   return git(dir, ['rev-parse', '--show-toplevel'])
 }
@@ -34,7 +60,11 @@ export async function isClean(root: string): Promise<boolean> {
   return (await git(root, ['status', '--porcelain'])) === ''
 }
 
-/** Splits a NUL-separated `-z` git listing into repo-relative POSIX paths. */
+/**
+ * Splits a NUL-separated `-z` git listing into repo-relative POSIX paths.
+ * `out` must come from `gitRaw`, not `git` — see `gitRaw`'s doc comment for
+ * why trimming first would silently corrupt a path with a leading space.
+ */
 function parseNulList(out: string): string[] {
   return out
     .split('\0')
@@ -74,8 +104,8 @@ function parseNulList(out: string): string[] {
  */
 export async function changedFiles(root: string, sinceRef: string): Promise<string[]> {
   const [diffOut, untrackedOut] = await Promise.all([
-    git(root, ['diff', '--name-only', '-z', sinceRef]),
-    git(root, ['ls-files', '--others', '--exclude-standard', '-z']),
+    gitRaw(root, ['diff', '--name-only', '-z', sinceRef]),
+    gitRaw(root, ['ls-files', '--others', '--exclude-standard', '-z']),
   ])
   return [...new Set([...parseNulList(diffOut), ...parseNulList(untrackedOut)])].sort()
 }

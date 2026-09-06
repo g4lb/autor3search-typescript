@@ -96,6 +96,20 @@ describe('gitx', () => {
     expect(await changedFiles(root, base)).toEqual(['sneaky.ts'])
   })
 
+  it('preserves a leading space in a changed path instead of trimming it away', async () => {
+    // A leading space (0x20) sorts before any letter, so git reports this
+    // path first — exactly the position a whole-output `.trim()` clips. If
+    // the leading space were stripped, a scope gate allowlisting `src/**`
+    // would see the in-scope-looking `evil.ts` while the real file living
+    // at ` evil.ts` (untouched by the allowlist) sails through: the same
+    // "name a file carefully to bypass the gate" class `-z` exists to
+    // prevent, reintroduced one layer up by an over-eager trim.
+    const root = await scratchRepo()
+    const base = await headCommit(root)
+    await writeFile(path.join(root, ' evil.ts'), 'export const evil = 1\n')
+    expect(await changedFiles(root, base)).toEqual([' evil.ts'])
+  })
+
   it('does not see an untracked file inside a gitignored directory', async () => {
     const root = await scratchRepo()
     await writeFile(path.join(root, '.gitignore'), 'ignored/\n')

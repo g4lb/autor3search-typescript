@@ -203,9 +203,16 @@ describe('cmdStop', () => {
     const code = await cmdStop(ctx, ['-tag', TAG, '-force'])
 
     expect(code).toBe(0)
-    // The refusal is a hard early-return, not merely "never happens to pass
-    // 1 or -1" -- pid 1's group must never even attempt a signal.
-    expect(killSpy).not.toHaveBeenCalled()
+    // A signal-0 liveness probe (process.kill(pid, 0)) sends nothing and is
+    // harmless even for pid 1 -- it's how this command decides whether to
+    // report the lock as "running" at all. What must never happen is an
+    // ACTUAL signal (SIGTERM here) reaching pid 1 or its process group.
+    for (const call of killSpy.mock.calls) {
+      const [pidArg, sigArg] = call
+      if (sigArg === 0) continue
+      expect(pidArg, `unexpected real signal ${String(sigArg)} to pid ${String(pidArg)}`).not.toBe(1)
+      expect(pidArg, `unexpected real signal ${String(sigArg)} to pid ${String(pidArg)}`).not.toBe(-1)
+    }
     killSpy.mockRestore()
   })
 

@@ -79,6 +79,24 @@ async function tryGit<T>(f: () => Promise<T>): Promise<T | null> {
 }
 
 /**
+ * Mirrors lock.ts's private `isAlive` (not exported): EPERM means the
+ * process exists but we lack permission to signal it, which is still
+ * "alive." Used here only to word the report honestly -- a lock recording a
+ * pid that already died (the eval crashed, or a previous `-force` already
+ * killed it) must not be reported as "signalled" just because the file is
+ * still there; `readEvalLock` itself never checks this (see its own doc
+ * comment), so a caller that needs to know still has to.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
  * `stop`: asks a running (or about-to-run) `eval` loop to end.
  *
  * Plain `stop` only ever writes `stop.json` -- the agent reads it at its
@@ -155,8 +173,14 @@ export async function cmdStop(ctx: RunCtx, argv: readonly string[]): Promise<num
   process.stdout.write(`stop -force requested for tag ${JSON.stringify(resolvedTag)}.\n`)
 
   const lock = await readEvalLock(dir)
+  const signalled = lock !== null && isPidAlive(lock.pid)
   if (lock === null) {
     process.stdout.write('  no eval lock is currently held: nothing to signal.\n')
+  } else if (!signalled) {
+    process.stdout.write(
+      `  eval.lock names pid ${lock.pid}, but it is no longer running (a previous eval likely ` +
+        'crashed, or was already stopped): nothing to signal.\n',
+    )
   } else {
     killGroup(lock.pid, 'SIGTERM')
     process.stdout.write(`  signalled pid ${lock.pid} (SIGTERM) to abandon its current experiment.\n`)
@@ -167,12 +191,20 @@ export async function cmdStop(ctx: RunCtx, argv: readonly string[]): Promise<num
 
   process.stdout.write(`  current branch: ${branch ?? 'unknown'}\n`)
   process.stdout.write(`  HEAD commit:    ${head === null ? 'unknown' : `${shortSha(head)} (${head})`}\n`)
+  // Only claim a commit was actually abandoned when something was really
+  // signalled -- with no eval lock held, HEAD is just whatever the last
+  // completed experiment left behind, not something this invocation
+  // interrupted. Either way, nothing has been changed here; dropping a
+  // commit is the human's call, never this tool's, so the reset command is
+  // only ever printed, never run.
   process.stdout.write(
-    '  this is very likely the commit for the experiment just abandoned. Nothing here has been\n' +
-      '  changed -- dropping it is your call, not this tool\'s. To drop it:\n' +
-      '\n' +
-      '    git reset --hard HEAD~1\n',
+    signalled
+      ? '  this is very likely the commit for the experiment just abandoned. Nothing here has been\n' +
+          '  changed -- dropping it is your call, not this tool\'s. To drop it:\n'
+      : '  no eval was running, so nothing was abandoned. If HEAD above is still an unwanted\n' +
+          '  experiment, nothing here has been changed -- dropping it is your call. To drop it:\n',
   )
+  process.stdout.write('\n    git reset --hard HEAD~1\n')
 
   return 0
 }

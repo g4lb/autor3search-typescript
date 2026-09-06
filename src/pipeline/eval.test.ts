@@ -793,3 +793,76 @@ describe('runEval: end to end against the real demo fixture', () => {
     expect(worktreeBenchText).toBe(originalBenchText)
   })
 })
+
+// Scoped re-review finding (I6): the advance sequence used to be
+// repointWorktree -> restore -> writeBaseline, all-or-nothing in appearance
+// but not in fact -- a crash between the first two steps and the third left
+// `measureCommit` unmoved while the worktree had already moved, and a crash
+// between `repointWorktree` and `restore` left the worktree's frozen files
+// stale. Recovery advice in both cases pointed at "baseline -force," which
+// re-derives the freeze manifest from whatever is at HEAD -- silently
+// adopting the agent's own commits as the new correctness contract.
+//
+// The fix writes `measureCommit` FIRST, so a worktree merely left behind
+// (at the OLD commit, while the baseline record already names the NEW one)
+// is a recoverable, well-defined state: gate 8 repairs it itself.
+describe('runEval: worktree self-heal (I6)', () => {
+  it('gate 8 repoints and restores a worktree left behind by an interrupted advance, instead of demanding -force', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    const worktreeDir = path.join(dir, 'baseline-worktree')
+    const beforeFix = await readBaseline(dir)
+
+    await applyRealFix(root)
+    const fixedHead = await headCommit(root)
+    const keepOutcome = await runEval({ ctx, tag: TAG, description: 'push instead of concat' })
+    expect(keepOutcome.verdict.status).toBe('keep') // precondition
+    expect((await readBaseline(dir)).measureCommit).toBe(fixedHead)
+
+    // Simulate exactly the crash window this fix targets: measureCommit is
+    // already durably advanced to fixedHead (proven above), but the
+    // worktree itself never got repointed -- reverted here by hand, back to
+    // the ORIGINAL frozen commit, standing in for "the repoint/restore step
+    // never ran."
+    await git(worktreeDir, ['checkout', '-q', '--detach', '--force', beforeFix.measureCommit])
+    expect(await headCommit(worktreeDir)).toBe(beforeFix.measureCommit)
+    expect(await headCommit(worktreeDir)).not.toBe(fixedHead)
+
+    // A further trivial commit, so this second eval has something new to
+    // evaluate (gate 8's other check).
+    await trivialCommit(root)
+
+    const secondOutcome = await runEval({ ctx, tag: TAG, description: 'after simulated crash' })
+
+    // No FAIL demanding -force: the mismatch was repaired automatically.
+    expect(secondOutcome.failedGate).not.toBe('worktree-integrity')
+    expect(secondOutcome.warnings.join(' ')).toMatch(/repointed and restored automatically/)
+    // The repair actually happened: the worktree is now at the commit
+    // baseline.measureCommit already named, not the stale one.
+    expect(await headCommit(worktreeDir)).toBe(fixedHead)
+  })
+
+  // Mutation-adjacent control: BEFORE the fix, `checkWorktreeIntegrity`
+  // returned a bare FAIL ("run baseline -force to recreate it") for this
+  // exact state, with measureOne never called. Pinning `not.toHaveBeenCalled`
+  // being FALSE here (i.e. measurement genuinely proceeds) is what would
+  // have failed against the old behaviour.
+  it('measures normally after the self-heal, rather than stopping at gate 8', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    const worktreeDir = path.join(dir, 'baseline-worktree')
+    const beforeFix = await readBaseline(dir)
+
+    await applyRealFix(root)
+    const keepOutcome = await runEval({ ctx, tag: TAG, description: 'push instead of concat' })
+    expect(keepOutcome.verdict.status).toBe('keep')
+
+    await git(worktreeDir, ['checkout', '-q', '--detach', '--force', beforeFix.measureCommit])
+    await trivialCommit(root)
+
+    const spy = vi.fn(constMeasureOne)
+    await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(spy).toHaveBeenCalled()
+  })
+})

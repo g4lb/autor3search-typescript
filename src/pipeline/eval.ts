@@ -22,9 +22,11 @@
  *                           an uncommitted edit and crediting it to a commit
  *                           that never contained it would let one uncommitted
  *                           optimization be scored forever); the pinned
- *                           baseline worktree still exists, is at
- *                           `baseline.measureCommit`, and its lockfile is
- *                           untouched
+ *                           baseline worktree still exists and its lockfile
+ *                           is untouched -- if it is merely at the wrong
+ *                           commit (an interrupted step 11 advance), it is
+ *                           repointed and restored automatically here
+ *                           rather than refused
  *  9. measure            -- interleaved benchmark measurement, base vs. candidate
  * 10. score              -- `compareAll` + `decide`
  * 11. on KEEP             -- advance `measureCommit` (never `frozenCommit`)
@@ -440,9 +442,10 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
         'nothing new to evaluate. Commit your change, then run eval.',
     )
   }
-  const worktreeProblem = await checkWorktreeIntegrity(worktreeDir, baseline)
-  if (worktreeProblem !== null) {
-    return finish(noVerdict('fail'), [], 'worktree-integrity', worktreeProblem)
+  const worktreeResult = await checkWorktreeIntegrity(worktreeDir, frozenDir, baseline)
+  if (worktreeResult.warning !== null) warnings.push(worktreeResult.warning)
+  if (worktreeResult.error !== null) {
+    return finish(noVerdict('fail'), [], 'worktree-integrity', worktreeResult.error)
   }
 
   // --- Gate 9: measure.
@@ -501,6 +504,17 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // manifest are never touched -- moving the measurement point must never
   // move the success criteria.
   //
+  // `writeBaseline` runs FIRST, before either worktree operation --
+  // deliberately, so the sequence is recoverable rather than merely
+  // atomic-looking. A KEEP is a real, already-decided fact the moment
+  // `decide()` returns it; `measureCommit` recording that fact must not
+  // depend on two more subprocess calls (`repointWorktree`, `restore`)
+  // succeeding first. If either fails or the process dies here, the NEXT
+  // eval's gate 8 sees a worktree merely behind the now-already-recorded
+  // `measureCommit` -- a state it repairs itself (see
+  // `checkWorktreeIntegrity`) instead of demanding `baseline -force`, which
+  // would silently re-freeze from whatever is at HEAD by then.
+  //
   // `repointWorktree` checks out the candidate commit's OWN tree into the
   // base worktree -- tampered bench/test content included, since freezing
   // only pins byte content in the manifest and the frozen snapshot, not
@@ -517,10 +531,11 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // benchmark bytes, regardless of what any given commit holds.
   if (verdict.status === 'keep') {
     try {
+      const advanced: BaselineRecord = { ...baseline, measureCommit: candidateCommit }
+      await writeBaseline(dir, advanced)
+      baseline = advanced
       await repointWorktree(worktreeDir, candidateCommit)
       await restore(worktreeDir, frozenDir, baseline.manifest)
-      baseline = { ...baseline, measureCommit: candidateCommit }
-      await writeBaseline(dir, baseline)
     } catch (e) {
       // A genuine KEEP was already decided -- this is a harness failure
       // advancing the measurement point, not a verdict about the change,
@@ -534,33 +549,88 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   return finish(verdict, deltas, undefined, `${verdict.status}${verdict.reason ? `: ${verdict.reason}` : ''}`)
 }
 
-async function checkWorktreeIntegrity(worktreeDir: string, baseline: BaselineRecord): Promise<string | null> {
+interface WorktreeIntegrityResult {
+  /** Set only when the problem is unrecoverable here; the gate must FAIL. */
+  error: string | null
+  /** Set when this call repaired something -- surfaced as a WARNING, never silent. */
+  warning: string | null
+}
+
+/**
+ * The `"baseline -force" to recreate it` advice this function used to give
+ * for EVERY problem was actively harmful for the one case (below) that is
+ * cheaply self-healing: `-force` re-derives the freeze manifest from
+ * whatever is at HEAD when it runs, silently adopting the agent's own
+ * commits as the new correctness contract -- exactly the "grade its own
+ * homework" failure mode this whole tool exists to prevent. It is still the
+ * right advice for the two cases that genuinely have no cheaper fix
+ * (the worktree is gone; the lockfile itself changed), so those messages
+ * now say so explicitly rather than presenting `-force` as a free action.
+ */
+async function checkWorktreeIntegrity(
+  worktreeDir: string,
+  frozenDir: string,
+  baseline: BaselineRecord,
+): Promise<WorktreeIntegrityResult> {
   if (!(await exists(worktreeDir))) {
-    return `no worktree at ${worktreeDir}; run "baseline -force" to recreate it`
+    return {
+      error:
+        `no worktree at ${worktreeDir}: it is missing and must be re-created. "baseline -force" ` +
+        'will do that, but it also re-freezes tests/benchmarks from the CURRENT HEAD, adopting ' +
+        'whatever is committed there as the new frozen contract -- review what has changed since ' +
+        'the original baseline before running it.',
+      warning: null,
+    }
   }
   let atCommit: string
   try {
     atCommit = await headCommit(worktreeDir)
   } catch (e) {
-    return `could not read the worktree's HEAD: ${messageOf(e)}`
+    return { error: `could not read the worktree's HEAD: ${messageOf(e)}`, warning: null }
   }
+
+  let warning: string | null = null
   if (atCommit !== baseline.measureCommit) {
-    return (
-      `the worktree is at ${atCommit} but baseline.measureCommit is ${baseline.measureCommit}; ` +
-      'run "baseline -force" to recreate it'
-    )
+    // Merely being at the wrong commit is cheaply recoverable WITHOUT
+    // re-freezing anything: `baseline.measureCommit` is already the
+    // authoritative value by the time this ever runs (step 11 writes it
+    // before touching the worktree at all), so this is exactly the state a
+    // crash between that write and the repoint/restore that follows it
+    // would leave behind -- self-healed here instead of demanded of the
+    // human via `-force`. `frozenCommit` and `baseline.manifest` are never
+    // touched by this: only the MEASUREMENT point is being caught up.
+    try {
+      await repointWorktree(worktreeDir, baseline.measureCommit)
+      await restore(worktreeDir, frozenDir, baseline.manifest)
+    } catch (e) {
+      return {
+        error:
+          `the worktree is at ${atCommit} but baseline.measureCommit is ${baseline.measureCommit}, ` +
+          `and repairing it automatically failed: ${messageOf(e)}`,
+        warning: null,
+      }
+    }
+    warning =
+      `the baseline worktree was at ${atCommit}, behind baseline.measureCommit ` +
+      `(${baseline.measureCommit}) -- likely left over from an interrupted measureCommit advance -- ` +
+      'and was repointed and restored automatically'
   }
+
   let lockfileText: string
   try {
     lockfileText = await readFile(path.join(worktreeDir, baseline.lockfileName), 'utf8')
   } catch (e) {
-    return `could not read the worktree's lockfile (${baseline.lockfileName}): ${messageOf(e)}`
+    return { error: `could not read the worktree's lockfile (${baseline.lockfileName}): ${messageOf(e)}`, warning }
   }
   if (hashString(lockfileText) !== baseline.lockfileHash) {
-    return (
-      `the worktree's lockfile (${baseline.lockfileName}) no longer matches baseline.lockfileHash; ` +
-      'run "baseline -force" to recreate it'
-    )
+    return {
+      error:
+        `the worktree's lockfile (${baseline.lockfileName}) no longer matches baseline.lockfileHash: ` +
+        'dependencies must be reinstalled. "baseline -force" will do that, but it also re-freezes ' +
+        'tests/benchmarks from the CURRENT HEAD, adopting whatever is committed there as the new ' +
+        'frozen contract -- review what has changed since the original baseline before running it.',
+      warning,
+    }
   }
-  return null
+  return { error: null, warning }
 }

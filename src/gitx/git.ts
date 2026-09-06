@@ -237,7 +237,18 @@ export async function removeWorktree(root: string, dir: string): Promise<void> {
  * This is how the MEASUREMENT commit advances after a KEEP. It must never be
  * used on the frozen-test snapshot: moving the measurement point must not move
  * the success criteria.
+ *
+ * `--force` (in addition to `-q --detach`): this is also how `eval` gate 8
+ * self-heals a worktree merely left at the wrong commit (e.g. by a crash
+ * between recording an advanced `measureCommit` and repointing the
+ * worktree to match it -- see `pipeline/eval.ts`). That worktree's own
+ * frozen files were restored on a previous run and may still differ from
+ * the target commit's tree; a plain `checkout --detach` would refuse to
+ * discard those local changes, which the self-heal must not depend on a
+ * human clearing first. Safe to discard unconditionally: the worktree
+ * holds nothing this tool did not itself put there, and `restore` runs
+ * again immediately after this to reassert the frozen bytes regardless.
  */
 export async function repointWorktree(worktreeDir: string, commit: string): Promise<void> {
-  await git(worktreeDir, ['checkout', '-q', '--detach', commit])
+  await git(worktreeDir, ['checkout', '-q', '--detach', '--force', commit])
 }

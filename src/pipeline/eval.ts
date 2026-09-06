@@ -61,6 +61,8 @@ const WORKTREE_DIRNAME = 'baseline-worktree'
 const FROZEN_DIRNAME = 'frozen'
 
 export type GateName =
+  /** No baseline for this tag, or the config file itself could not be loaded at all. */
+  | 'setup'
   | 'scope'
   | 'config-integrity'
   | 'restore'
@@ -246,12 +248,12 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   try {
     baseline = await readBaseline(dir)
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'config-integrity', messageOf(e))
+    return finish(noVerdict('fail'), [], 'setup', messageOf(e))
   }
   try {
     config = await loadConfig(opts.ctx.configPath)
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'config-integrity', messageOf(e))
+    return finish(noVerdict('fail'), [], 'setup', messageOf(e))
   }
 
   // --- Gate 1: scope. Immutable files reject unconditionally, regardless of

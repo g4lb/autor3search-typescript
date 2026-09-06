@@ -37,8 +37,11 @@ async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promis
 }
 
 const TAG = 'sep6'
+// count: 10, not the minimum 4 -- see the identical note in pipeline/eval.test.ts:
+// at 4 the exact two-sided p-value floor (2/C(8,4) ~= 0.0286) is only ~1.75x
+// below ALPHA (0.05), thin enough for a loaded CI box's timing noise to flip.
 const FAST_MEASURE_PATCHES: Record<string, string> = {
-  count: '4',
+  count: '10',
   benchtime: JSON.stringify('5ms'),
   warmup: JSON.stringify('0ms'),
 }
@@ -165,6 +168,84 @@ describe('cmdEval', () => {
     expect(typeof parsed['measure_commit']).toBe('string')
     expect(typeof parsed['frozen_commit']).toBe('string')
     expect(typeof parsed['experiment']).toBe('number')
+    expect(typeof parsed['failed_gate']).toBe('string')
+    expect(typeof parsed['message']).toBe('string')
+  })
+
+  it('a FAIL is diagnostically informative, not empty: failed_gate and message name the actual problem', async () => {
+    const { root, ctx } = await setup()
+    await writeFile(path.join(root, 'notes.txt'), 'agent notes\n', 'utf8')
+    await git(root, ['add', 'notes.txt'])
+    await git(root, ['commit', '-q', '-m', 'add a file outside scope'])
+    captureOutput()
+
+    const code = await cmdEval(ctx, ['-tag', TAG, '--json'])
+
+    expect(code).toBe(2)
+    const parsed = JSON.parse(stdout.join('')) as { status: string; failed_gate: string; message: string; reason: string }
+    expect(parsed.status).toBe('fail')
+    expect(parsed.failed_gate).toBe('scope')
+    expect(parsed.message).toMatch(/notes\.txt/)
+    // results.tsv's reason column can only ever hold a DiscardReason or ''
+    // (never a FAIL's free-text message) -- the diagnosis instead lands in
+    // description, which must not be left empty just because -desc was not passed.
+    const rows = await loadRows(ctx.resultsPath)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.reason).toBe('')
+    expect(rows[0]?.description).toMatch(/notes\.txt/)
+  })
+
+  // A genuine measurement-child crash, driven through the real CLI end to
+  // end (not an injected test double): a benchmark that throws only when a
+  // marker file exists in its OWN process's cwd. The marker is absent
+  // during baseline's smoke run (which executes in the separate worktree)
+  // and is created only in repoRoot, gitignored so the scope gate never
+  // sees it, right before this eval -- so only the candidate side crashes.
+  it('a real measurement-child crash exits 3 (CRASH), not 2 (FAIL)', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      await writeFile(
+        path.join(root, 'src', 'crash.bench.ts'),
+        [
+          "import { existsSync } from 'node:fs'",
+          "import path from 'node:path'",
+          '',
+          'export function benchCrash(): number {',
+          "  if (existsSync(path.join(process.cwd(), 'CRASH_NOW'))) {",
+          "    throw new Error('boom: forced crash for testing')",
+          '  }',
+          '  return 1',
+          '}',
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+      await writeFile(path.join(root, '.gitignore'), 'CRASH_NOW\n', 'utf8')
+      await git(root, ['add', '-A'])
+      await git(root, ['commit', '-q', '-m', 'add a crash-aware benchmark'])
+
+      expect(await cmdInit(ctx, [])).toBe(0)
+      await patchConfig(ctx, FAST_MEASURE_PATCHES)
+      await git(root, ['add', 'program.md', '.gitignore'])
+      await git(root, ['commit', '-q', '-m', 'init'])
+      expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
+    } finally {
+      outSpy.mockRestore()
+      errSpy.mockRestore()
+    }
+
+    await writeFile(path.join(root, 'CRASH_NOW'), '', 'utf8')
+
+    captureOutput()
+    const code = await cmdEval(ctx, ['-tag', TAG, '--json'])
+
+    expect(code).toBe(3)
+    const parsed = JSON.parse(stdout.join('')) as { status: string; failed_gate: string }
+    expect(parsed.status).toBe('crash')
+    expect(parsed.failed_gate).toBe('measure')
   })
 
   it('records -desc on the results.tsv row', async () => {
@@ -197,21 +278,30 @@ describe('cmdEval', () => {
     const warningLines = text.split('\n').filter((l) => l.startsWith('WARNING:'))
     expect(warningLines.length).toBeGreaterThan(0)
     expect(warningLines.join('\n')).toMatch(/restored/)
-    // Every WARNING: line must precede the verdict line.
-    const verdictIdx = text.indexOf('KEEP') !== -1 || text.indexOf('DISCARD') !== -1
-    expect(verdictIdx).toBe(true)
+    // Every WARNING: line must precede the verdict line -- compare actual
+    // positions, not merely that both substrings occur somewhere: an
+    // implementation that printed warnings AFTER the verdict would still
+    // pass a check that only asks "does some verdict word appear."
+    const lastWarningPos = text.lastIndexOf(warningLines[warningLines.length - 1] as string)
+    const verdictPos = text.search(/: (KEEP|DISCARD|FAIL|CRASH) \(exit/)
+    expect(verdictPos).toBeGreaterThan(-1)
+    expect(verdictPos).toBeGreaterThan(lastWarningPos)
   })
 
   it('subprocess transcripts go to run.log, not stdout', async () => {
-    const { ctx } = await setup({ ...FAST_MEASURE_PATCHES, test_command: JSON.stringify('node -e "console.log(1)"') })
+    const marker = 'RUN_LOG_MARKER_9f3a1c'
+    const { ctx } = await setup({
+      ...FAST_MEASURE_PATCHES,
+      test_command: JSON.stringify(`node -e "console.log('${marker}')"`),
+    })
     captureOutput()
 
     await cmdEval(ctx, ['-tag', TAG, '--json'])
 
     const log = await readFile(ctx.logPath, 'utf8')
-    expect(log).toMatch(/1/)
+    expect(log).toContain(marker)
     // stdout is exactly the one JSON object -- nothing from the test command leaked into it.
-    expect(stdout.join('')).not.toMatch(/^1$/m)
+    expect(stdout.join('')).not.toContain(marker)
   })
 
   it('a usage error (bad flag) exits 2 and never attempts an experiment', async () => {

@@ -72,6 +72,8 @@ export type GateName =
   | 'test'
   | 'worktree-integrity'
   | 'measure'
+  /** Advancing measureCommit after a KEEP was already decided. */
+  | 'advance'
 
 /**
  * The subset of `RunCtx` (see `cli/runctx.ts`) this pipeline needs. Declared
@@ -216,6 +218,19 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
 
     const bestBenchDelta = deltas.length > 0 ? Math.min(...deltas.map((d) => d.pctChange)) : 0
     const pMin = deltas.length > 0 ? Math.min(...deltas.map((d) => d.p)) : 1
+    // results.tsv's `reason` column only ever holds a `DiscardReason` or ''
+    // (loadRows rejects anything else) -- a FAIL/CRASH's free-text `message`
+    // cannot go there. Folding it into `description` instead is the only
+    // place in the fixed 7-column row that can carry it, so a FAIL/CRASH row
+    // is not left with an empty reason AND an empty description, the way a
+    // plain `opts.description` passthrough would leave it whenever the agent
+    // did not also pass `-desc`.
+    const isFailure = verdict.status === 'fail' || verdict.status === 'crash'
+    const description = isFailure
+      ? opts.description.length > 0
+        ? `${opts.description}: ${message}`
+        : message
+      : opts.description
     const row: Row = {
       commit: candidateCommit,
       score: verdict.score,
@@ -223,7 +238,7 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
       pMin,
       status: verdict.status,
       reason: verdict.reason ?? '',
-      description: opts.description,
+      description,
     }
     await appendRow(opts.ctx.resultsPath, row)
 
@@ -242,27 +257,32 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
     }
   }
 
-  // --- Load baseline and config. Either failing is a FAIL, not a crash: an
-  // eval that cannot even establish what it is measuring against has not
-  // measured anything.
+  // --- Load baseline and config. Either failing is a harness/environment
+  // problem, not a policy decision about the agent's change (there is no
+  // change to have a policy about yet) -- CRASH, not FAIL. Reporting FAIL
+  // here would tell an unattended agent "your change was rejected, try
+  // another," which for "no baseline exists yet" is actively false and
+  // would loop it forever discarding otherwise-good work.
   try {
     baseline = await readBaseline(dir)
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'setup', messageOf(e))
+    return finish(noVerdict('crash'), [], 'setup', messageOf(e))
   }
   try {
     config = await loadConfig(opts.ctx.configPath)
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'setup', messageOf(e))
+    return finish(noVerdict('crash'), [], 'setup', messageOf(e))
   }
 
   // --- Gate 1: scope. Immutable files reject unconditionally, regardless of
-  // `config.scope` -- see `checkScope`.
+  // `config.scope` -- see `checkScope`. A failure to even COMPUTE the
+  // changed-file list (git itself failing) is a harness problem, not a
+  // scope verdict about the change -- CRASH.
   let changed: string[]
   try {
     changed = await changedFiles(opts.ctx.repoRoot, baseline.frozenCommit)
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'scope', `could not compute changed files: ${messageOf(e)}`)
+    return finish(noVerdict('crash'), [], 'scope', `could not compute changed files: ${messageOf(e)}`)
   }
   const violations = checkScope(changed, config.scope)
   if (violations.length > 0) {
@@ -277,7 +297,7 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   try {
     configText = await readFile(opts.ctx.configPath, 'utf8')
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'config-integrity', `could not read config: ${messageOf(e)}`)
+    return finish(noVerdict('crash'), [], 'config-integrity', `could not read config: ${messageOf(e)}`)
   }
   if (hashString(configText) !== baseline.configHash) {
     return finish(
@@ -290,7 +310,9 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
 
   // --- Gate 3: restore. Frozen files are put back exactly as they were,
   // whether or not the agent's edit to them was "in scope" -- a test file
-  // edit is legal to make, but its content is not legal to keep.
+  // edit is legal to make, but its content is not legal to keep. A failure
+  // here (e.g. the frozen snapshot itself is missing or unreadable) is a
+  // harness-state problem, not something the agent's change did -- CRASH.
   try {
     const changedByRestore = await restore(opts.ctx.repoRoot, frozenDir, baseline.manifest)
     restoredFiles.push(...changedByRestore)
@@ -300,17 +322,18 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
       )
     }
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'restore', `could not restore frozen files: ${messageOf(e)}`)
+    return finish(noVerdict('crash'), [], 'restore', `could not restore frozen files: ${messageOf(e)}`)
   }
 
   // --- Gate 4: unmanifested. A new test/bench/runner-config file absent
   // from the frozen manifest is rejected outright -- this is what closes
-  // "add an easier benchmark."
+  // "add an easier benchmark." A failure to even list the candidate files
+  // (a filesystem walk failing) is a harness problem -- CRASH.
   let candidates: string[]
   try {
     candidates = await freezableFiles(opts.ctx.repoRoot)
   } catch (e) {
-    return finish(noVerdict('fail'), [], 'unmanifested', `could not list freezable files: ${messageOf(e)}`)
+    return finish(noVerdict('crash'), [], 'unmanifested', `could not list freezable files: ${messageOf(e)}`)
   }
   const extra = findUnmanifested(candidates, baseline.manifest, config.unfreeze)
   if (extra.length > 0) {
@@ -424,10 +447,35 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // --- Step 11: on KEEP, advance measureCommit. frozenCommit and the
   // manifest are never touched -- moving the measurement point must never
   // move the success criteria.
+  //
+  // `repointWorktree` checks out the candidate commit's OWN tree into the
+  // base worktree -- tampered bench/test content included, since freezing
+  // only pins byte content in the manifest and the frozen snapshot, not
+  // what a later commit is allowed to contain. Gate 3 already restored
+  // `repoRoot`'s WORKING TREE for this experiment's own measurement, but
+  // that restoration never touches the commit itself, so without also
+  // restoring the worktree here, a candidate commit that both fixes the
+  // source AND slows the benchmark body would earn a legitimate KEEP now
+  // and then permanently inflate every future baseline measurement -- "add
+  // an easier benchmark," routed around gate 4 (which only checks the
+  // manifest, not commit content) via the one place gate 3's fix never
+  // reaches. Restoring the worktree's frozen files immediately after the
+  // repoint closes that gap: both sides always measure the SAME frozen
+  // benchmark bytes, regardless of what any given commit holds.
   if (verdict.status === 'keep') {
-    await repointWorktree(worktreeDir, candidateCommit)
-    baseline = { ...baseline, measureCommit: candidateCommit }
-    await writeBaseline(dir, baseline)
+    try {
+      await repointWorktree(worktreeDir, candidateCommit)
+      await restore(worktreeDir, frozenDir, baseline.manifest)
+      baseline = { ...baseline, measureCommit: candidateCommit }
+      await writeBaseline(dir, baseline)
+    } catch (e) {
+      // A genuine KEEP was already decided -- this is a harness failure
+      // advancing the measurement point, not a verdict about the change,
+      // so it must not read as FAIL ("your change was rejected"). CRASH is
+      // also why this experiment still gets a results.tsv row here, rather
+      // than an exception escaping with nothing recorded at all.
+      return finish(noVerdict('crash'), deltas, 'advance', messageOf(e))
+    }
   }
 
   return finish(verdict, deltas, undefined, `${verdict.status}${verdict.reason ? `: ${verdict.reason}` : ''}`)

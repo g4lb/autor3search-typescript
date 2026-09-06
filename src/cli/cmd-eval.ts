@@ -64,6 +64,10 @@ interface JsonOutcome {
   measure_commit: string
   frozen_commit: string
   experiment: number
+  /** Which gate rejected the experiment, empty for KEEP/DISCARD/CRASH-in-measurement. */
+  failed_gate: string
+  /** Human-readable explanation -- for FAIL/CRASH this is the only place the actual diagnosis lives. */
+  message: string
 }
 
 function toJson(outcome: EvalOutcome, exitCode: number): JsonOutcome {
@@ -86,6 +90,8 @@ function toJson(outcome: EvalOutcome, exitCode: number): JsonOutcome {
     measure_commit: outcome.measureCommit,
     frozen_commit: outcome.frozenCommit,
     experiment: outcome.experiment,
+    failed_gate: outcome.failedGate ?? '',
+    message: outcome.message,
   }
 }
 
@@ -93,6 +99,7 @@ function printHuman(outcome: EvalOutcome, exitCode: number): void {
   for (const w of outcome.warnings) process.stdout.write(`WARNING: ${w}\n`)
   const status = outcome.verdict.status.toUpperCase()
   process.stdout.write(`experiment ${outcome.experiment}: ${status} (exit ${exitCode})\n`)
+  if (outcome.failedGate) process.stdout.write(`  failed_gate: ${outcome.failedGate}\n`)
   process.stdout.write(`  ${outcome.message}\n`)
   if (outcome.deltas.length > 0) {
     process.stdout.write('  benchmarks:\n')

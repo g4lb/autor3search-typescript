@@ -74,9 +74,17 @@ async function setup(patches: Record<string, string> = {}): Promise<{ root: stri
 /** Deterministic, near-instant stand-in for a real benchmark measurement. */
 const constMeasureOne = async (): Promise<number> => 1
 
-/** Rounds/benchtime/warmup small enough that a real `runChild` spawn stays fast. */
+/**
+ * Rounds/benchtime/warmup small enough that a real `runChild` spawn stays
+ * fast. `count: 10` (not the minimum 4) deliberately: at 4 the exact
+ * two-sided p-value floor is 2/C(8,4) = 2/70 ~= 0.0286, only ~1.75x below
+ * ALPHA (0.05) -- thin enough that a loaded CI box's timing noise could
+ * occasionally flip a real, large effect below significance. At 10 the
+ * floor is 2/C(20,10) ~= 1.08e-5, a ~4600x margin (this is also exactly
+ * what the real end-to-end CLI run in task-19-report.md measured).
+ */
 const FAST_MEASURE_PATCHES: Record<string, string> = {
-  count: '4',
+  count: '10',
   benchtime: JSON.stringify('5ms'),
   warmup: JSON.stringify('0ms'),
 }
@@ -123,6 +131,21 @@ afterEach(async () => {
 })
 
 describe('runEval: gate order', () => {
+  // Positive control for every "gate rejects before measuring, so the spy
+  // is never called" test below: without this, an inverted implementation
+  // that measures FIRST and gates afterward (or one that never calls
+  // measureOne at all, gate or no gate) would leave every one of those
+  // negative assertions vacuously true. This proves measureOne genuinely
+  // gets invoked on the one path where nothing should stop it.
+  it('positive control: measureOne IS called when no gate rejects', async () => {
+    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+    const spy = vi.fn(constMeasureOne)
+
+    await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(spy).toHaveBeenCalled()
+  })
+
   it('gate 1: rejects an edit to package.json even under a permissive scope', async () => {
     const { root, ctx } = await setup({ scope: '["**"]' })
     const pkgPath = path.join(root, 'package.json')
@@ -212,6 +235,40 @@ describe('runEval: gate order', () => {
     expect(outcome.verdict.status).not.toBe('crash')
   })
 
+  // The test above cannot tell restore-before-test from restore-after-test
+  // apart: the weakened body passes (it asserts nothing) and the restored
+  // real body ALSO passes (wordcount.ts itself is untouched), so
+  // `failedGate !== 'test'` holds either way. This test discriminates the
+  // two: it also breaks the SOURCE (not frozen, so the edit survives) in a
+  // way the real, restored assertions catch but the weakened, no-op body
+  // would not. If restore ran AFTER gate 7 (or not at all), the weakened
+  // body would pass trivially against the broken source and gate 7 would
+  // never fail; if restore runs BEFORE gate 7 (the actual, correct order),
+  // the real assertions run against the broken source and gate 7 fails.
+  it('gate 3 runs BEFORE gate 7: the restored real test then fails against a broken source', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const wcFile = path.join(root, 'src', 'wordcount.ts')
+    const wcText = await readFile(wcFile, 'utf8')
+    const broken = wcText.replace('return counts', 'return new Map()') // always returns empty
+    expect(broken).not.toBe(wcText)
+    await writeFile(wcFile, broken, 'utf8')
+    await writeFile(
+      path.join(root, 'src', 'wordcount.test.ts'),
+      "import { describe, it } from 'node:test'\ndescribe('countWords', () => { it('does nothing', () => {}) })\n",
+      'utf8',
+    )
+    await git(root, ['add', 'src/wordcount.ts', 'src/wordcount.test.ts'])
+    await git(root, ['commit', '-q', '-m', 'break source and weaken the test together'])
+    const spy = vi.fn()
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(outcome.restoredFiles).toContain('src/wordcount.test.ts')
+    expect(outcome.verdict.status).toBe('fail')
+    expect(outcome.failedGate).toBe('test')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
   it('gate 4: rejects a NEW bench file absent from the frozen manifest', async () => {
     const { root, ctx } = await setup()
     await addAndCommit(
@@ -298,6 +355,60 @@ describe('runEval: gate order', () => {
     expect(outcome.verdict.status).toBe('fail')
     expect(outcome.failedGate).toBe('worktree-integrity')
     expect(spy).not.toHaveBeenCalled()
+  })
+
+  // A wrong implementation that maps a measurement-child failure to
+  // noVerdict('fail') instead of noVerdict('crash') would pass every other
+  // test in this file -- this is the only one that actually drives a
+  // measurement failure and checks which status it produces.
+  it('gate 9: any ok:false from a measurement child is CRASH, not FAIL', async () => {
+    const { ctx } = await setup(FAST_MEASURE_PATCHES)
+
+    const outcome = await runEval({
+      ctx,
+      tag: TAG,
+      description: '',
+      measureOne: async () => {
+        throw new Error('boom: forced measurement failure')
+      },
+    })
+
+    expect(outcome.verdict.status).toBe('crash')
+    expect(outcome.failedGate).toBe('measure')
+    const rows = await loadRows(ctx.resultsPath)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.status).toBe('crash')
+  })
+})
+
+describe('runEval: harness failures are CRASH, not FAIL', () => {
+  // "No baseline exists for this tag" is not a verdict about a change --
+  // there is no change to have a verdict about. Reporting FAIL here would
+  // tell an unattended agent "try another change," which is actively false
+  // and would loop it forever discarding otherwise-good work.
+  it('reports CRASH, not FAIL, when no baseline exists for the tag', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    await initWithConfig(root, ctx, FAST_MEASURE_PATCHES)
+    // Deliberately no cmdBaseline call.
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: vi.fn() })
+
+    expect(outcome.verdict.status).toBe('crash')
+    expect(outcome.failedGate).toBe('setup')
+  })
+
+  // The frozen snapshot going missing is a harness/environment problem
+  // (corrupted run state), not something the agent's own change did.
+  it('reports CRASH, not FAIL, when the frozen snapshot is missing a file restore needs', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    await rm(path.join(dir, 'frozen', 'src', 'wordcount.test.ts'))
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: vi.fn() })
+
+    expect(outcome.verdict.status).toBe('crash')
+    expect(outcome.failedGate).toBe('restore')
   })
 })
 
@@ -420,5 +531,57 @@ describe('runEval: end to end against the real demo fixture', () => {
 
     expect(noopOutcome.verdict.status).toBe('discard')
     expect(noopOutcome.verdict.reason).toBe('no_significant_improvement')
+  })
+
+  // The attack this closes: gate 3 restores the FROZEN FILES ON DISK for
+  // this experiment's own measurement, but never touches the candidate
+  // COMMIT itself. A commit that both fixes real source AND slows the
+  // benchmark body earns a legitimate KEEP (measured against the
+  // gate-3-restored, real benchmark) -- but `repointWorktree` alone would
+  // then check that same commit's tampered bench body into the BASE
+  // worktree, permanently inflating every future baseline measurement.
+  // Gate 4 does not catch this: the file is already in the manifest, only
+  // its content differs commit-to-commit. This is "add an easier
+  // benchmark," routed around the one gate built to stop it.
+  it('a bench file tampered in the same commit as a real fix does NOT survive into the base worktree after KEEP', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    const benchFile = path.join(root, 'src', 'wordcount.bench.ts')
+    const originalBenchText = await readFile(benchFile, 'utf8')
+
+    const wcFile = path.join(root, 'src', 'wordcount.ts')
+    const wcText = await readFile(wcFile, 'utf8')
+    const fixed = wcText.replace('chars = chars.concat([c])', 'chars.push(c)')
+    expect(fixed).not.toBe(wcText)
+    await writeFile(wcFile, fixed, 'utf8')
+    // Tamper the benchmark body in the SAME commit: gate 3 restores this on
+    // disk before THIS experiment measures, so the real speedup is what
+    // gets scored -- the attack is what happens to the committed content
+    // afterward, not to this experiment's own verdict.
+    const tamperedBench = originalBenchText.replace(
+      'export function benchCountWords(): Map<string, number> {',
+      'export function benchCountWords(): Map<string, number> {\n  for (let i = 0; i < 5_000_000; i++) { /* slow the benchmark body down */ }',
+    )
+    expect(tamperedBench).not.toBe(originalBenchText)
+    await writeFile(benchFile, tamperedBench, 'utf8')
+    await git(root, ['add', 'src/wordcount.ts', 'src/wordcount.bench.ts'])
+    await git(root, ['commit', '-q', '-m', 'fix wordcount AND slow the benchmark body'])
+
+    // A deterministic stand-in that reports a real, large, one-sided
+    // improvement without spawning anything -- what matters for this test
+    // is what happens to the WORKTREE's bench file content after KEEP, not
+    // re-proving the real fix's magnitude (already covered by the
+    // real-fixture KEEP test above).
+    const worktreeDir = path.join(dir, 'baseline-worktree')
+    const sidedMeasureOne = async (measureDir: string): Promise<number> => (measureDir === worktreeDir ? 1000 : 10)
+
+    const outcome = await runEval({ ctx, tag: TAG, description: 'fix + tamper bench', measureOne: sidedMeasureOne })
+
+    expect(outcome.verdict.status).toBe('keep')
+    const worktreeBenchText = await readFile(
+      path.join(dir, 'baseline-worktree', 'src', 'wordcount.bench.ts'),
+      'utf8',
+    )
+    expect(worktreeBenchText).toBe(originalBenchText)
   })
 })

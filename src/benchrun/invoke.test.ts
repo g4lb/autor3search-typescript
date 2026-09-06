@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { discoverBenchmarks } from '../discover/benchmarks.js'
 import { makeDemoRepo } from '../testutil/demo.js'
-import { CHILD, runChild } from './invoke.js'
+import { CHILD, pickChildPath, readChildResult, runChild } from './invoke.js'
 
 async function tmp(prefix = 'ars-invoke-'): Promise<string> {
   return mkdtemp(path.join(tmpdir(), prefix))
@@ -179,5 +179,76 @@ describe('runChild', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.nsPerOp).toBeGreaterThan(0)
+  })
+})
+
+describe('pickChildPath', () => {
+  it('chooses child.js when it exists', () => {
+    const chosen = pickChildPath('/some/dir', (p) => p === path.join('/some/dir', 'child.js'))
+    expect(chosen).toBe(path.join('/some/dir', 'child.js'))
+  })
+
+  it('falls back to child.ts when child.js does not exist', () => {
+    const chosen = pickChildPath('/some/dir', () => false)
+    expect(chosen).toBe(path.join('/some/dir', 'child.ts'))
+  })
+})
+
+describe('readChildResult', () => {
+  const fakeExec = { timedOut: false, exitCode: 0, stderr: '' }
+
+  it('parses a well-formed result file', async () => {
+    const dir = await tmp()
+    const outFile = path.join(dir, 'result.json')
+    await writeFile(outFile, JSON.stringify({ ok: true, id: 'x', nsPerOp: 1, iterations: 1, batches: 1, elapsedMs: 1, sinkType: 'number' }))
+
+    const r = await readChildResult(outFile, 'x', fakeExec, 30_000)
+    expect(r.ok).toBe(true)
+  })
+
+  it('reports ok:false instead of rejecting when --out contains truncated JSON', async () => {
+    // Reproduces the real failure mode described in review: our own
+    // timeout path SIGKILLs the child's process group, which can land
+    // mid-writeFile and leave a truncated-but-readable JSON document on
+    // disk. readFile succeeds; only JSON.parse/parseBenchResult would
+    // catch this, and if that throw were left uncaught it would reject
+    // the returned promise instead of yielding a CRASH-able ok:false.
+    const dir = await tmp()
+    const outFile = path.join(dir, 'result.json')
+    // A SIGKILL mid-write would truncate at an arbitrary byte offset; this
+    // slices a valid document well before its closing brace to reproduce
+    // exactly that shape without depending on real subprocess timing.
+    const full = JSON.stringify({ ok: true, id: 'x', nsPerOp: 1, iterations: 1, batches: 1, elapsedMs: 1, sinkType: 'number' })
+    await writeFile(outFile, full.slice(0, full.length - 10))
+
+    // Asserted via .resolves rather than a bare await: if the underlying
+    // implementation reverts to letting the parse error propagate, this
+    // promise REJECTS, and .resolves is what turns that into a normal
+    // failing assertion instead of an unhandled-rejection test crash.
+    await expect(readChildResult(outFile, 'x', fakeExec, 30_000)).resolves.toMatchObject({
+      ok: false,
+      id: 'x',
+      error: expect.stringMatching(/malformed/i),
+    })
+  })
+
+  it('reports ok:false when --out contains valid JSON with the wrong shape', async () => {
+    const dir = await tmp()
+    const outFile = path.join(dir, 'result.json')
+    await writeFile(outFile, JSON.stringify({ notARealResult: true }))
+
+    const r = await readChildResult(outFile, 'x', fakeExec, 30_000)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toMatch(/malformed/i)
+  })
+
+  it('reports ok:false naming the timeout when --out is missing because the child never wrote it', async () => {
+    const dir = await tmp()
+    const outFile = path.join(dir, 'result.json') // never written
+    const r = await readChildResult(outFile, 'x', { timedOut: true, exitCode: 137, stderr: 'stuck' }, 1234)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toMatch(/timed out after 1234ms/)
   })
 })

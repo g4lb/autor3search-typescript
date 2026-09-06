@@ -13,26 +13,35 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseBenchResult, type BenchResult } from '../benchproto/types.js'
-import { run, tail } from '../runner/exec.js'
+import { run, tail, type ExecResult } from '../runner/exec.js'
 
 const require = createRequire(import.meta.url)
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
 /**
- * Resolves the measurement child, preferring the built `child.js` and
- * falling back to the source `child.ts`.
+ * Picks the measurement child from a directory, preferring the built
+ * `child.js` and falling back to the source `child.ts`.
  *
  * Under a real install (`dist/`), only `child.js` exists next to this
- * module. Under Vitest, `import.meta.url` resolves to
- * `src/benchrun/invoke.ts`, where only `child.ts` exists -- there is no
- * build step before the test run. Either way the spawn below runs through
- * the tsx loader, so a `.ts` path works identically to a `.js` one; this
- * just picks whichever file is actually on disk.
+ * module -- that is the branch that actually runs for an installed user.
+ * Under Vitest, `import.meta.url` resolves to `src/benchrun/invoke.ts`,
+ * where only `child.ts` exists -- there is no build step before the test
+ * run. Either way the spawn below runs through the tsx loader, so a `.ts`
+ * path works identically to a `.js` one; this just picks whichever file is
+ * actually on disk.
+ *
+ * Pulled apart from `resolveChild` (a thin wrapper below) so both branches
+ * can be exercised directly with an injected existence check, since only
+ * one of the two ever exists in any single checkout.
  */
+export function pickChildPath(dir: string, exists: (p: string) => boolean): string {
+  const asJs = path.join(dir, 'child.js')
+  if (exists(asJs)) return asJs
+  return path.join(dir, 'child.ts')
+}
+
 function resolveChild(): string {
-  const asJs = path.join(HERE, 'child.js')
-  if (existsSync(asJs)) return asJs
-  return path.join(HERE, 'child.ts')
+  return pickChildPath(HERE, existsSync)
 }
 
 export const CHILD = resolveChild()
@@ -48,6 +57,54 @@ export const CHILD = resolveChild()
  */
 function tsxLoaderUrl(): string {
   return pathToFileURL(require.resolve('tsx/esm')).href
+}
+
+/**
+ * Arbitrary throw values (a non-`Error`, or a `JSON.parse` `SyntaxError`)
+ * both need a printable message; this mirrors the same helper in child.ts.
+ */
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+/**
+ * Reads and parses the child's `--out` file, turning every failure mode
+ * into `{ ok: false }` instead of a rejection: a missing file (the child
+ * died before writing at all) and a present-but-malformed one (the file
+ * exists but doesn't parse, or doesn't have the right shape).
+ *
+ * The malformed case is not exotic: our own timeout path kills the child's
+ * process group with SIGKILL, which can land mid-`writeFile`, leaving a
+ * truncated-but-readable JSON document on disk. `readFile` succeeds on
+ * that; only `JSON.parse`/`parseBenchResult` would have caught it, and
+ * uncaught, that throw would have propagated out of `runChild` as a
+ * rejected promise -- exactly the "harness bug" failure mode `runChild`
+ * exists to avoid for a benchmark-level failure.
+ *
+ * Exported for testing: it lets a test write deliberately truncated JSON
+ * to a real, controlled `--out` path and assert `ok: false` directly,
+ * without needing to race a real subprocess's SIGKILL against its own
+ * `writeFile` to reproduce the truncation.
+ */
+export async function readChildResult(
+  outFile: string,
+  id: string,
+  r: Pick<ExecResult, 'timedOut' | 'exitCode' | 'stderr'>,
+  timeoutMs: number,
+): Promise<BenchResult> {
+  let text: string
+  try {
+    text = await readFile(outFile, 'utf8')
+  } catch {
+    // The child died before writing. Its own stderr is the useful diagnosis.
+    const why = r.timedOut ? `timed out after ${timeoutMs}ms` : `exit ${r.exitCode}`
+    return { ok: false, id, error: `benchmark child ${why}: ${tail(r.stderr, 20)}` }
+  }
+  try {
+    return parseBenchResult(text)
+  } catch (e) {
+    return { ok: false, id, error: `malformed benchmark result: ${messageOf(e)}` }
+  }
 }
 
 export interface RunChildOptions {
@@ -98,16 +155,18 @@ export async function runChild(o: RunChildOptions): Promise<BenchResult> {
       timeoutMs: o.timeoutMs,
       ...(o.log ? { log: o.log } : {}),
     })
-    let text: string
-    try {
-      text = await readFile(outFile, 'utf8')
-    } catch {
-      // The child died before writing. Its own stderr is the useful diagnosis.
-      const why = r.timedOut ? `timed out after ${o.timeoutMs}ms` : `exit ${r.exitCode}`
-      return { ok: false, id: o.id, error: `benchmark child ${why}: ${tail(r.stderr, 20)}` }
-    }
-    return parseBenchResult(text)
+    return await readChildResult(outFile, o.id, r, o.timeoutMs)
   } finally {
-    await rm(dir, { recursive: true, force: true })
+    // A failure here (permissions, an EBUSY-like transient on some
+    // platform) must never replace a result the try block already
+    // produced -- losing a computed measurement is strictly worse than
+    // leaking a temp directory, so the cleanup failure is swallowed rather
+    // than left to propagate out of `finally` and clobber the return value
+    // (or the rejection) above.
+    try {
+      await rm(dir, { recursive: true, force: true })
+    } catch {
+      /* leak the directory rather than discard the result */
+    }
   }
 }

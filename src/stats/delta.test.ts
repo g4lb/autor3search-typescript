@@ -44,12 +44,15 @@ describe('compareAll', () => {
   it('throws when the candidate is missing a benchmark the baseline has', () => {
     const base = new Map([['a', SLOW], ['b', SLOW]])
     const cand = new Map([['a', FAST]])
-    expect(() => compareAll(base, cand)).toThrow(/missing.*b/)
+    // \b...\b pins this to the standalone key "b", not just any message
+    // containing the word "benchmarks" — it must fail if the implementation
+    // names the wrong key (e.g. "a") or omits the key entirely.
+    expect(() => compareAll(base, cand)).toThrow(/missing.*\bb\b/)
   })
 
   it('throws when the candidate adds a benchmark the baseline lacks', () => {
     const base = new Map([['a', SLOW]])
     const cand = new Map([['a', FAST], ['b', FAST]])
-    expect(() => compareAll(base, cand)).toThrow(/unexpected.*b/)
+    expect(() => compareAll(base, cand)).toThrow(/unexpected.*\bb\b/)
   })
 })

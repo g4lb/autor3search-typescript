@@ -50,6 +50,20 @@ describe('mannWhitneyU', () => {
   it('rejects empty samples', () => {
     expect(() => mannWhitneyU([], [1, 2])).toThrow(/at least one observation/)
   })
+
+  it('falls back to the normal approximation once n1*n2 exceeds the exact-DP cell budget', () => {
+    // 51*51 = 2601 cells, just over the 2_500 budget, with no ties (the
+    // interleaved evens/odds keep the combined set tie-free) so this would
+    // otherwise qualify for the exact path. Interleaved rather than fully
+    // separated, so the resulting p-value is not so extreme it underflows
+    // to 0 in the normal approximation.
+    const a = Array.from({ length: 51 }, (_, i) => i * 2)
+    const b = Array.from({ length: 51 }, (_, i) => i * 2 + 1)
+    const r = mannWhitneyU(a, b)
+    expect(r.exact).toBe(false)
+    expect(r.p).toBeGreaterThan(0)
+    expect(r.p).toBeLessThanOrEqual(1)
+  })
 })
 
 describe('minAchievableP', () => {

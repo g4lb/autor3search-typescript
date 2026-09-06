@@ -16,8 +16,20 @@ export interface MannWhitneyResult {
   exact: boolean
 }
 
-/** Largest n1*n2 for which we build the exact distribution. */
-const MAX_EXACT_CELLS = 10_000
+/**
+ * Largest n1*n2 for which we build the exact distribution.
+ *
+ * The DP table's total footprint grows much faster than n1*n2 itself: at
+ * n1=n2=50 (2_500) it holds 1,628,226 Float64 entries, about 12 MB; at
+ * n1=n2=100 (10_000) — a value `count` can reach with no upper bound in
+ * config, and one the README will tell users to raise on a noisy machine —
+ * it holds 25,512,701 entries, about 195 MB, once per benchmark per
+ * experiment. That is a plausible way to OOM a memory-constrained CI runner,
+ * not a theoretical edge case. Above this bound we fall back to the normal
+ * approximation, which is essentially exact once each sample exceeds ~50
+ * observations.
+ */
+const MAX_EXACT_CELLS = 2_500
 
 /**
  * Counts of the U statistic under the null hypothesis.
@@ -111,8 +123,13 @@ export function mannWhitneyU(
   if (a.length === 0 || b.length === 0) {
     throw new Error('mannWhitneyU: each sample needs at least one observation')
   }
-  // Defensive copies: a rank test must sort, and sorting the caller's array
-  // in place is a bug that is invisible until some other statistic is wrong.
+  // These slices are not what stops caller mutation today: rank() sorts a
+  // derived array of {v, i} pairs rather than `combined`, and `combined`
+  // (built with concat() below) is already a fresh array regardless of
+  // whether xa/xb are copies. The "does not mutate its inputs" guarantee
+  // currently comes entirely from rank()'s design. We keep these copies
+  // anyway — they are cheap, and they keep that guarantee true even if
+  // rank() is later changed to sort its argument in place.
   const xa = a.slice()
   const xb = b.slice()
   const n1 = xa.length

@@ -17,37 +17,34 @@ import type { BenchResult } from '../benchproto/types.js'
 const MIN_BATCH_NS = 10_000_000n // 10ms
 
 /**
- * Written on every call, read once at the end. This is what keeps V8 from
- * proving a benchmark's return value is unused and deleting the work that
- * produced it -- a benchmark that computes something and returns it must
- * have that return value actually consumed somewhere, or the "measurement"
- * degenerates into timing an empty loop.
+ * Written on every call, read once at the end via `sinkType`. Consuming the
+ * return value this way is cheap insurance against an optimizer deciding an
+ * unread result is dead and eliding the work that produced it. Measured
+ * directly (see task-12-report.md): the specific V8 build and benchmark
+ * shapes tested so far did NOT eliminate the loop even with the sink
+ * removed, so this is not known to be load-bearing today -- it is kept
+ * because that is a fact about one V8 version and a handful of shapes, not
+ * a guarantee, and the cost of keeping it is one assignment and one read.
  */
 let sink: unknown
 
-const { values } = parseArgs({
-  options: {
-    file: { type: 'string' },
-    fn: { type: 'string' },
-    id: { type: 'string' },
-    'benchtime-ms': { type: 'string' },
-    'warmup-ms': { type: 'string' },
-    out: { type: 'string' },
-  },
-})
+type Bench = () => unknown
 
-const file = values.file!
-const fnName = values.fn!
-const id = values.id!
-const benchtimeMs = Number(values['benchtime-ms'])
-const warmupMs = Number(values['warmup-ms'])
-const out = values.out!
-
-async function emit(r: BenchResult): Promise<void> {
-  await writeFile(out, JSON.stringify(r))
+/** True for a promise or any other thenable a benchmark might return. */
+function isThenable(v: unknown): v is PromiseLike<unknown> {
+  return v !== null && typeof v === 'object' && typeof (v as PromiseLike<unknown>).then === 'function'
 }
 
-type Bench = () => unknown
+/**
+ * Arbitrary repository code can `throw` anything, not just an `Error` --
+ * `throw null` or `throw 'boom'` are both legal JS. `(e as Error).message`
+ * on a non-Error throws its own TypeError, which would crash this process
+ * with no --out file written at all: exactly the crash this module exists
+ * to avoid.
+ */
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
 
 function runBatchSync(fn: Bench, n: number): bigint {
   const start = process.hrtime.bigint()
@@ -61,19 +58,92 @@ async function runBatchAsync(fn: Bench, n: number): Promise<bigint> {
   return process.hrtime.bigint() - start
 }
 
-async function main(): Promise<void> {
+interface Args {
+  file: string
+  fnName: string
+  id: string
+  benchtimeMs: number
+  warmupMs: number
+  out: string
+}
+
+function isNonNegativeInteger(n: number): boolean {
+  return Number.isFinite(n) && Number.isInteger(n) && n >= 0
+}
+
+type ParseResult =
+  | { ok: true; args: Args }
+  | { ok: false; attributable: true; id: string; out: string; message: string }
+  | { ok: false; attributable: false; message: string }
+
+/**
+ * Parses and validates argv. --out and --id are checked first because they
+ * are what let any OTHER failure be reported at all -- without an output
+ * path or an id to put in it, an invalid-invocation result cannot be
+ * attributed to any benchmark, so their absence is fatal (caller exits
+ * non-zero) rather than reported as a benchmark result the way every other
+ * validation failure is.
+ */
+function parseArgv(): ParseResult {
+  const { values } = parseArgs({
+    options: {
+      file: { type: 'string' },
+      fn: { type: 'string' },
+      id: { type: 'string' },
+      'benchtime-ms': { type: 'string' },
+      'warmup-ms': { type: 'string' },
+      out: { type: 'string' },
+    },
+  })
+
+  const out = values.out
+  const id = values.id
+  if (typeof out !== 'string' || out === '' || typeof id !== 'string' || id === '') {
+    return { ok: false, attributable: false, message: 'missing --out or --id' }
+  }
+
+  const file = values.file
+  if (typeof file !== 'string' || file === '') {
+    return { ok: false, attributable: true, id, out, message: 'missing --file' }
+  }
+  const fnName = values.fn
+  if (typeof fnName !== 'string' || fnName === '') {
+    return { ok: false, attributable: true, id, out, message: 'missing --fn' }
+  }
+  const benchtimeMs = Number(values['benchtime-ms'])
+  if (!isNonNegativeInteger(benchtimeMs)) {
+    return {
+      ok: false,
+      attributable: true,
+      id,
+      out,
+      message: `--benchtime-ms must be a non-negative integer, got ${JSON.stringify(values['benchtime-ms'])}`,
+    }
+  }
+  const warmupMs = Number(values['warmup-ms'])
+  if (!isNonNegativeInteger(warmupMs)) {
+    return {
+      ok: false,
+      attributable: true,
+      id,
+      out,
+      message: `--warmup-ms must be a non-negative integer, got ${JSON.stringify(values['warmup-ms'])}`,
+    }
+  }
+  return { ok: true, args: { file, fnName, id, benchtimeMs, warmupMs, out } }
+}
+
+async function measure(args: Args): Promise<BenchResult> {
   let fn: Bench
   try {
-    const mod = (await import(pathToFileURL(file).href)) as Record<string, unknown>
-    const candidate = mod[fnName]
+    const mod = (await import(pathToFileURL(args.file).href)) as Record<string, unknown>
+    const candidate = mod[args.fnName]
     if (typeof candidate !== 'function') {
-      await emit({ ok: false, id, error: `${file} does not export a function named ${fnName}` })
-      return
+      return { ok: false, id: args.id, error: `${args.file} does not export a function named ${args.fnName}` }
     }
     fn = candidate as Bench
   } catch (e) {
-    await emit({ ok: false, id, error: `import ${file}: ${(e as Error).message}` })
-    return
+    return { ok: false, id: args.id, error: `import ${args.file}: ${messageOf(e)}` }
   }
 
   try {
@@ -82,8 +152,7 @@ async function main(): Promise<void> {
     // measurement, so the two cases get separate loops: runBatchSync never
     // awaits, runBatchAsync always does.
     const probe = fn()
-    const isAsync =
-      probe !== null && typeof probe === 'object' && typeof (probe as PromiseLike<unknown>).then === 'function'
+    const isAsync = isThenable(probe)
     if (isAsync) await probe
     sink = probe
 
@@ -94,7 +163,7 @@ async function main(): Promise<void> {
     // Warm up first: JIT tiering changes the speed we are about to
     // calibrate to, so calibrating against a cold function would pick a
     // batch size for code that no longer exists by the time we measure.
-    const warmDeadline = process.hrtime.bigint() + BigInt(warmupMs) * 1_000_000n
+    const warmDeadline = process.hrtime.bigint() + BigInt(args.warmupMs) * 1_000_000n
     while (process.hrtime.bigint() < warmDeadline) await batch(16)
 
     // Calibrate a batch size whose duration is well above timer resolution.
@@ -108,7 +177,7 @@ async function main(): Promise<void> {
     let totalNs = 0n
     let iterations = 0
     let batches = 0
-    const deadline = process.hrtime.bigint() + BigInt(benchtimeMs) * 1_000_000n
+    const deadline = process.hrtime.bigint() + BigInt(args.benchtimeMs) * 1_000_000n
     while (process.hrtime.bigint() < deadline) {
       totalNs += await batch(n)
       iterations += n
@@ -121,20 +190,65 @@ async function main(): Promise<void> {
       batches = 1
     }
 
-    await emit({
+    // The initial probe is a single, un-timed call: it decides which loop
+    // measures every batch for the rest of the run. A benchmark that took
+    // a synchronous fast path on that one call (a cache hit, an early
+    // return) but later starts returning promises (a cache miss, a lazily
+    // opened connection) would stay on runBatchSync, which never awaits --
+    // silently timing promise *construction* instead of the awaited work,
+    // and reporting a real-looking nsPerOp that is orders of magnitude too
+    // small. One check here, after the loop, is enough to catch it without
+    // adding a per-iteration cost to every measurement.
+    if (!isAsync && isThenable(sink)) {
+      return {
+        ok: false,
+        id: args.id,
+        error: `${args.fnName}: benchmark is conditionally async -- the initial probe call returned a plain value so it was measured synchronously, but a later call returned a promise; measured timings would reflect promise construction, not the awaited work`,
+      }
+    }
+
+    return {
       ok: true,
-      id,
+      id: args.id,
       nsPerOp: Number(totalNs) / iterations,
       iterations,
       batches,
       elapsedMs: Number(totalNs) / 1_000_000,
-      // Reading the sink is what makes every write to it observable, which
-      // is what makes those writes something V8 cannot optimize away.
+      // typeof the value consumed above -- see the `sink` declaration for
+      // why it is read at all.
       sinkType: typeof sink,
-    })
+    }
   } catch (e) {
-    await emit({ ok: false, id, error: `${fnName}: ${(e as Error).message}` })
+    return { ok: false, id: args.id, error: `${args.fnName}: ${messageOf(e)}` }
   }
 }
 
+async function main(): Promise<void> {
+  const parsed = parseArgv()
+  if (!parsed.ok && !parsed.attributable) {
+    // No --out and/or --id: there is nowhere to write a result and nothing
+    // to attribute it to, so this is the one failure mode that is not
+    // reported as a benchmark result.
+    process.stderr.write(`benchrun child: invalid invocation: ${parsed.message}\n`)
+    process.exit(1)
+  }
+  if (parsed.ok) {
+    const result = await measure(parsed.args)
+    await writeFile(parsed.args.out, JSON.stringify(result))
+    return
+  }
+  await writeFile(
+    parsed.out,
+    JSON.stringify({ ok: false, id: parsed.id, error: `invalid invocation: ${parsed.message}` }),
+  )
+}
+
 await main()
+// A benchmark module can leave the event loop non-empty on its way out (an
+// open timer, a socket, a lingering connection pool) even though the result
+// is already written. Without an explicit exit, node would wait for that
+// handle and the parent would eventually kill this process on timeout,
+// discarding a result that was complete on disk the whole time -- the same
+// "arbitrary repository code" reasoning that justified --out in the first
+// place.
+process.exit(0)

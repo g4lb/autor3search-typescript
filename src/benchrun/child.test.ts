@@ -209,11 +209,14 @@ describe('bench child', () => {
     const { result, stdout } = await runChild(dir, file, 'benchZ')
     // The module's own logging still reaches stdout unmodified...
     expect(stdout).toContain('noise from the module under measurement')
-    // ...but the protocol result parses cleanly from --out regardless, and
-    // is not the JSON blob some naive implementation might have printed to
-    // stdout instead.
+    // ...but the protocol result parses cleanly from --out regardless. This
+    // must fail if the child printed the result JSON to stdout ALONGSIDE
+    // the module's noise, not just if stdout were pure JSON -- a plain
+    // `JSON.parse(stdout)` throwing is not enough, since stdout containing
+    // "noise\n{...}" also fails to parse without the protocol having
+    // actually stayed off stdout.
     expect(result.ok).toBe(true)
-    expect(() => JSON.parse(stdout)).toThrow()
+    expect(stdout).not.toContain('"nsPerOp"')
   })
 
   it('scales iterations so a fast benchmark runs many more of them than a slow one', async () => {
@@ -244,6 +247,16 @@ describe('bench child', () => {
     // iterations than the ~1ms one, or calibration is not scaling batch
     // size to the actual cost of the function.
     expect(tiny.iterations).toBeGreaterThan(spin.iterations * 100)
+    // Pin the batch size itself, not just the resulting ratio: a
+    // regression that always calibrates to n=1 (never doubling) would
+    // still pass the ratio check above by inflating iterations through
+    // pure batch *count* instead of batch *size*, while reporting a
+    // nsPerOp roughly 40x too high (measured: ~14.7ns/op at a
+    // wrongly-pinned n=1 vs. ~0.3ns/op at the correctly calibrated n for
+    // this exact benchmark). Both a large batch size and a low nsPerOp
+    // catch that independently of the ratio assertion above.
+    expect(tiny.iterations / tiny.batches).toBeGreaterThan(10_000)
+    expect(tiny.nsPerOp).toBeLessThan(5)
   })
 
   it('reports roughly the known cost of a benchmark that spins for a fixed duration', async () => {
@@ -306,11 +319,20 @@ describe('bench child', () => {
     expect(asyncR.nsPerOp).toBeGreaterThan(sync.nsPerOp * 5)
   })
 
-  it('does not eliminate a pure computation whose result is only sink-consumed', async () => {
-    // The whole benchmark body is arithmetic with no side effects; nothing
-    // but the child's `sink = fn()` / `typeof sink` at the end keeps V8
-    // from proving the loop dead and deleting it. If the sink were
-    // decorative, this would measure near-zero instead of a real loop cost.
+  it('reports a real per-op cost for a side-effect-free computation, not a near-zero optimized-away one', async () => {
+    // NOTE on what this test does and does not show: it does NOT show that
+    // `sink` is what prevents this loop from being eliminated. A control
+    // (the same 200k-iteration body measured with the sink assignment
+    // removed) came back at essentially the same cost -- 8,913,162 ns/op
+    // without the sink vs 8,976,788 ns/op with it, 0.7% apart -- because V8
+    // does not delete a loop inside a non-inlined callee regardless of
+    // whether the caller consumes its return value. The sink is kept
+    // anyway as cheap insurance against optimizer decisions that can
+    // differ across V8 versions and benchmark shapes (see the `sink`
+    // comment in child.ts); this test only pins that the reported cost is
+    // a real, non-trivial number and that sinkType reflects what was
+    // actually returned, which is a regression this same fixture WOULD
+    // catch if the arithmetic below were somehow folded to a constant.
     const dir = await tmp()
     const file = await fixture(
       dir,
@@ -328,8 +350,256 @@ describe('bench child', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     // A 200k-iteration loop with real multiply/mod work costs at least
-    // tens of microseconds on any real CPU; a fully-eliminated call would
-    // cost single-digit nanoseconds (just the function-call overhead).
+    // tens of microseconds on any real CPU; a folded-to-constant call
+    // would cost single-digit nanoseconds (just the function-call
+    // overhead).
     expect(result.nsPerOp).toBeGreaterThan(10_000)
+    expect(result.sinkType).toBe('number')
+  })
+
+  it('reports a conditionally-async benchmark as ok:false instead of silently mismeasuring it', async () => {
+    // The one-time probe call returns a plain number (so the child commits
+    // to the synchronous, non-awaiting loop for the whole run), but every
+    // later call returns a promise -- e.g. a cache-hit/cache-miss split, or
+    // a connection that is opened lazily. Without the post-loop check,
+    // this would report ok:true with a nsPerOp reflecting only promise
+    // construction, not the awaited work: a plausible number that means
+    // nothing.
+    const dir = await tmp()
+    const file = await fixture(
+      dir,
+      `
+      let calls = 0
+      export function benchConditional(): number | Promise<number> {
+        calls++
+        if (calls === 1) return 1
+        return Promise.resolve(1)
+      }
+      `,
+    )
+    const { result } = await runChild(dir, file, 'benchConditional')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toMatch(/conditionally async/)
+  })
+
+  it('reports a non-Error throw (e.g. throw null) as ok:false instead of crashing with no result', async () => {
+    const dir = await tmp()
+    const file = await fixture(
+      dir,
+      `
+      export function benchThrowsNull(): number {
+        throw null
+      }
+      `,
+    )
+    const { result, exitCode } = await runChild(dir, file, 'benchThrowsNull')
+    expect(exitCode).toBe(0)
+    expect(result.ok).toBe(false)
+  })
+
+  it('reports a non-Error throw at import time as ok:false instead of crashing with no result', async () => {
+    const dir = await tmp()
+    const file = await fixture(dir, `throw null`)
+    const { result, exitCode } = await runChild(dir, file, 'anything')
+    expect(exitCode).toBe(0)
+    expect(result.ok).toBe(false)
+  })
+
+  it('exits after writing the result even when the benchmark leaves an open handle running', async () => {
+    // Simulates a benchmark module that leaves a handle open (a timer, a
+    // socket, a connection pool, ...). Without an explicit process.exit,
+    // node would keep this process alive waiting on the interval, and the
+    // parent would eventually kill it on timeout despite the result having
+    // already been written successfully -- so this asserts on wall-clock
+    // behavior (timedOut must stay false well under the timeout) rather
+    // than just on the eventual exit code, which a killed process can
+    // still report as 0.
+    const dir = await tmp()
+    const file = await fixture(
+      dir,
+      `
+      setInterval(() => {}, 1000)
+      export function benchWithHandle(): number {
+        return 1
+      }
+      `,
+    )
+    const outFile = path.join(dir, `out-${counter++}.json`)
+    const r = await run(
+      process.execPath,
+      [
+        '--import',
+        TSX_LOADER_URL,
+        CHILD,
+        '--file',
+        file,
+        '--fn',
+        'benchWithHandle',
+        '--id',
+        'x',
+        '--benchtime-ms',
+        '50',
+        '--warmup-ms',
+        '20',
+        '--out',
+        outFile,
+      ],
+      { cwd: dir, timeoutMs: 5_000 },
+    )
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(0)
+    const result = parseBenchResult(await readFile(outFile, 'utf8'))
+    expect(result.ok).toBe(true)
+  })
+
+  describe('flag validation', () => {
+    it('reports invalid --benchtime-ms as ok:false naming the flag', async () => {
+      const dir = await tmp()
+      const file = await fixture(dir, `export function benchA(): number { return 1 }`)
+      const outFile = path.join(dir, `out-${counter++}.json`)
+      const r = await run(
+        process.execPath,
+        [
+          '--import',
+          TSX_LOADER_URL,
+          CHILD,
+          '--file',
+          file,
+          '--fn',
+          'benchA',
+          '--id',
+          'x',
+          '--benchtime-ms',
+          'not-a-number',
+          '--warmup-ms',
+          '10',
+          '--out',
+          outFile,
+        ],
+        { cwd: dir, timeoutMs: 30_000 },
+      )
+      expect(r.exitCode).toBe(0)
+      const result = parseBenchResult(await readFile(outFile, 'utf8'))
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/invalid invocation/i)
+      expect(result.error).toMatch(/benchtime-ms/)
+    })
+
+    it('reports a fractional --benchtime-ms as ok:false naming the flag', async () => {
+      const dir = await tmp()
+      const file = await fixture(dir, `export function benchA(): number { return 1 }`)
+      const outFile = path.join(dir, `out-${counter++}.json`)
+      const r = await run(
+        process.execPath,
+        [
+          '--import',
+          TSX_LOADER_URL,
+          CHILD,
+          '--file',
+          file,
+          '--fn',
+          'benchA',
+          '--id',
+          'x',
+          '--benchtime-ms',
+          '200.5',
+          '--warmup-ms',
+          '10',
+          '--out',
+          outFile,
+        ],
+        { cwd: dir, timeoutMs: 30_000 },
+      )
+      expect(r.exitCode).toBe(0)
+      const result = parseBenchResult(await readFile(outFile, 'utf8'))
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/invalid invocation/i)
+      expect(result.error).toMatch(/benchtime-ms/)
+    })
+
+    it('reports a missing --warmup-ms as ok:false naming the flag, rather than crashing on BigInt(NaN)', async () => {
+      const dir = await tmp()
+      const file = await fixture(dir, `export function benchA(): number { return 1 }`)
+      const outFile = path.join(dir, `out-${counter++}.json`)
+      const r = await run(
+        process.execPath,
+        [
+          '--import',
+          TSX_LOADER_URL,
+          CHILD,
+          '--file',
+          file,
+          '--fn',
+          'benchA',
+          '--id',
+          'x',
+          '--benchtime-ms',
+          '50',
+          '--out',
+          outFile,
+        ],
+        { cwd: dir, timeoutMs: 30_000 },
+      )
+      expect(r.exitCode).toBe(0)
+      const result = parseBenchResult(await readFile(outFile, 'utf8'))
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/invalid invocation/i)
+      expect(result.error).toMatch(/warmup-ms/)
+    })
+
+    it('exits non-zero and writes no result when --out is missing', async () => {
+      const dir = await tmp()
+      const file = await fixture(dir, `export function benchA(): number { return 1 }`)
+      const r = await run(
+        process.execPath,
+        [
+          '--import',
+          TSX_LOADER_URL,
+          CHILD,
+          '--file',
+          file,
+          '--fn',
+          'benchA',
+          '--id',
+          'x',
+          '--benchtime-ms',
+          '50',
+          '--warmup-ms',
+          '10',
+        ],
+        { cwd: dir, timeoutMs: 30_000 },
+      )
+      expect(r.exitCode).not.toBe(0)
+    })
+
+    it('exits non-zero and writes no result when --id is missing', async () => {
+      const dir = await tmp()
+      const file = await fixture(dir, `export function benchA(): number { return 1 }`)
+      const outFile = path.join(dir, `out-${counter++}.json`)
+      const r = await run(
+        process.execPath,
+        [
+          '--import',
+          TSX_LOADER_URL,
+          CHILD,
+          '--file',
+          file,
+          '--fn',
+          'benchA',
+          '--benchtime-ms',
+          '50',
+          '--warmup-ms',
+          '10',
+          '--out',
+          outFile,
+        ],
+        { cwd: dir, timeoutMs: 30_000 },
+      )
+      expect(r.exitCode).not.toBe(0)
+    })
   })
 })

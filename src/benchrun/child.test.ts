@@ -281,10 +281,13 @@ describe('bench child', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     // 2ms of busy-spin, +/- generous slack for OS scheduling jitter and
-    // hrtime granularity -- but nowhere near an order of magnitude off,
-    // which is what a broken totalNs/iterations calculation would produce.
+    // hrtime granularity -- the intent is only to catch a broken
+    // totalNs/iterations calculation, not to pin an exact number. The upper
+    // bound was originally 4ms; a loaded CI box measured 4.48ms here (a real
+    // scheduling-jitter flake, not a broken calculation -- see the final
+    // whole-branch review), so it is now 20ms.
     expect(result.nsPerOp).toBeGreaterThan(1_500_000)
-    expect(result.nsPerOp).toBeLessThan(4_000_000)
+    expect(result.nsPerOp).toBeLessThan(20_000_000)
   })
 
   it('does not fold sync execution through the async loop (no await overhead on sync ops)', async () => {

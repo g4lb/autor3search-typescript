@@ -40,7 +40,7 @@ async function git(cwd: string, args: string[]): Promise<void> {
 /** Runs `init`, commits everything init produced that is meant to be committed. */
 async function initAndCommit(root: string, ctx: RunCtx): Promise<void> {
   expect(await cmdInit(ctx, [])).toBe(0)
-  await git(root, ['add', 'program.md', '.gitignore'])
+  await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 
@@ -63,7 +63,7 @@ async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promis
 async function initWithConfigAndCommit(root: string, ctx: RunCtx, patches: Record<string, string>): Promise<void> {
   expect(await cmdInit(ctx, [])).toBe(0)
   await patchConfig(ctx, patches)
-  await git(root, ['add', 'program.md', '.gitignore'])
+  await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 
@@ -422,6 +422,12 @@ describe('cmdBaseline', () => {
       cfgText.replace(/^benchmarks: \[\]$/m, 'benchmarks: ["src/nope.bench.ts:benchNope"]'),
       'utf8',
     )
+    // .autoresearch/config.yaml is a tracked, committed file (spec section
+    // 13): baseline refuses an unclean tree before it ever reaches the
+    // "declared benchmark exists" check below, so this edit must be
+    // committed like any other for that check to be what this test proves.
+    await git(root, ['add', CONFIG_PATH])
+    await git(root, ['commit', '-q', '-m', 'declare a benchmark that does not exist'])
 
     captureOutput()
     const code = await cmdBaseline(ctx, ['-tag', 'sep6'])

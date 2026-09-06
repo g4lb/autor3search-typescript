@@ -71,7 +71,7 @@ async function setup(patches: Record<string, string> = {}): Promise<{ root: stri
   try {
     expect(await cmdInit(ctx, [])).toBe(0)
     if (Object.keys(patches).length > 0) await patchConfig(ctx, patches)
-    await git(root, ['add', 'program.md', '.gitignore'])
+    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
     await git(root, ['commit', '-q', '-m', 'init'])
     expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
   } finally {
@@ -244,7 +244,7 @@ describe('cmdEval', () => {
 
       expect(await cmdInit(ctx, [])).toBe(0)
       await patchConfig(ctx, FAST_MEASURE_PATCHES)
-      await git(root, ['add', 'program.md', '.gitignore'])
+      await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
       await git(root, ['commit', '-q', '-m', 'init'])
       expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
       await trivialCommit(root)

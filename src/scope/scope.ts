@@ -1,4 +1,4 @@
-import { IMMUTABLE_FILES } from '../config/schema.js'
+import { CONFIG_PATH, IMMUTABLE_FILES } from '../config/schema.js'
 
 export interface ScopeViolation {
   file: string
@@ -50,6 +50,16 @@ const IMMUTABLE = new Set(IMMUTABLE_FILES)
 export function checkScope(changed: string[], scope: string[]): ScopeViolation[] {
   const out: ScopeViolation[] = []
   for (const file of changed) {
+    // `.autoresearch/config.yaml` is now a tracked, committed file (spec
+    // section 13), so any edit to it is visible to `changedFiles` like any
+    // other file -- but it already has its own dedicated, more specific
+    // protection: `pipeline/eval.ts` gate 2 hashes it against what baseline
+    // recorded and FAILs with a diagnosis naming the actual problem
+    // ("the run configuration is frozen"), not a generic scope violation.
+    // Exempting it here just lets that more specific gate be the one that
+    // actually reports it, rather than racing scope to the same conclusion
+    // with a less useful message.
+    if (file === CONFIG_PATH) continue
     if (IMMUTABLE.has(file)) {
       out.push({ file, reason: 'immutable' })
       continue

@@ -14,4 +14,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run build
+      # Run twice: an unidentified, rare (~1 in 21 observed) test failure
+      # was seen once under concurrent load and never isolated (see
+      # deferred-minors.md item 15) -- a single green run is not enough
+      # evidence the suite is healthy. A second run in the same job costs
+      # little and roughly squares the odds of missing a load-sensitive
+      # flake by luck.
+      - run: npm test
       - run: npm test

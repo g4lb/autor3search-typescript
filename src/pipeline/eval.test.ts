@@ -50,7 +50,7 @@ async function patchConfig(ctx: RunCtx, patches: Record<string, string>): Promis
 async function initWithConfig(root: string, ctx: RunCtx, patches: Record<string, string> = {}): Promise<void> {
   expect(await cmdInit(ctx, [])).toBe(0)
   if (Object.keys(patches).length > 0) await patchConfig(ctx, patches)
-  await git(root, ['add', 'program.md', '.gitignore'])
+  await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
   await git(root, ['commit', '-q', '-m', 'init: config + program.md'])
 }
 

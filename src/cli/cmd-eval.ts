@@ -1,9 +1,42 @@
-import { appendFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { currentBranch } from '../gitx/git.js'
 import { runEval, type EvalOutcome } from '../pipeline/eval.js'
+import { killActiveChildren } from '../runner/exec.js'
+import { runDir } from '../state/home.js'
+import { lockPath } from '../state/lock.js'
 import { EXIT_CODES } from '../verdict/verdict.js'
 import type { RunCtx } from './runctx.js'
+
+/**
+ * SIGTERM's default disposition kills node immediately -- once ANY listener
+ * is added, Node stops doing that for us, so this handler must actually
+ * terminate the process itself once it's done cleaning up.
+ *
+ * Both steps below are what `stop -force` (spec section 2 item 4) needs and
+ * does not otherwise get for free: `eval.ts` spawns every measurement child
+ * `detached: true` (its own process-group leader), so it is not reaped
+ * merely by `eval` itself dying; and the eval lock is a file this process
+ * would otherwise never release, since `acquireEvalLock`'s `finally` in
+ * `runEval` never runs if the process exits out from under it instead.
+ */
+/** Exported for testing: see `cmd-eval.sigterm.test.ts`. */
+export function installSigtermHandler(dir: string): () => void {
+  const onSigterm = (): void => {
+    killActiveChildren('SIGTERM')
+    try {
+      rmSync(lockPath(dir), { force: true })
+    } catch {
+      /* best effort -- exiting either way */
+    }
+    // 128 + 15 (SIGTERM), the conventional shell exit code for "killed by
+    // this signal" -- distinct from every real verdict's exit code (0-3),
+    // so a caller can tell "abandoned by -force" from any real outcome.
+    process.exit(143)
+  }
+  process.once('SIGTERM', onSigterm)
+  return () => process.off('SIGTERM', onSigterm)
+}
 
 /**
  * Duplicated from `cmd-baseline.ts` rather than imported -- see the same
@@ -178,11 +211,14 @@ export async function cmdEval(ctx: RunCtx, argv: readonly string[]): Promise<num
     }
   }
 
+  const removeSigtermHandler = installSigtermHandler(runDir(ctx.repoRoot, resolvedTag))
   let outcome: EvalOutcome
   try {
     outcome = await runEval({ ctx, tag: resolvedTag, description: desc, log })
   } catch (e) {
     return fail(`eval failed before producing a verdict: ${messageOf(e)}`)
+  } finally {
+    removeSigtermHandler()
   }
 
   const exitCode = EXIT_CODES[outcome.verdict.status]

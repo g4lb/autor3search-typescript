@@ -37,7 +37,8 @@ An unattended loop that, commit by commit:
 | source files under `scope` | rarely | yes — this is the whole point |
 | `*.test.ts`, `*.spec.ts`, `*.bench.ts` | yes | never (enforced: frozen content is restored before every measurement) |
 | `package.json`, lockfiles, `tsconfig.json` | yes | never (enforced: immutable regardless of `scope`) |
-| `results.tsv`, `.autoresearch/` state | never — this is what the agent cannot reach | never |
+| `results.tsv` | never, ordinarily | not prevented, but pointless — it is gitignored and untracked, so no gate ever sees it as "changed," and it is never read back to decide a verdict; editing it corrupts a human-readable log, nothing more |
+| baselines, locks, stop requests | never — this is what the agent cannot reach | never |
 
 The measurement state — baselines, locks, stop requests — lives outside the repository entirely (see "Where run state lives" below). If the agent could write any of it, it could grade its own work.
 
@@ -47,7 +48,7 @@ The measurement state — baselines, locks, stop requests — lives outside the 
 npm install --save-dev autoresearch-typescript
 npx autoresearch-typescript init
 # review .autoresearch/config.yaml and program.md, then:
-git add program.md .gitignore && git commit -m "chore: add autoresearch-typescript"
+git add .autoresearch/config.yaml program.md .gitignore && git commit -m "chore: add autoresearch-typescript"
 npx autoresearch-typescript baseline -tag <tag>
 # hand the repo and program.md to your agent, using the prompt above
 ```
@@ -82,7 +83,7 @@ Every command accepts a leading `-C <dir>` to run as if invoked from `<dir>` (it
 
 ## Where run state lives
 
-Everything the verdict depends on — the frozen manifest, the baseline record, the eval lock, stop requests — lives under the OS cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), keyed by the repository's own canonical path and the `-tag` you chose, never inside the repository itself. `results.tsv`, `run.log` and `.autoresearch/config.yaml` do live in the repository, but only `config.yaml`'s hash — not its content — is what the gate chain trusts; a hand-edit to it fails the next `eval`, not silently loosens it.
+Everything the verdict depends on — the frozen manifest, the baseline record, the eval lock, stop requests — lives under the OS cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), keyed by the repository's own canonical path and the `-tag` you chose, never inside the repository itself. `results.tsv` and `run.log` also live in the repository but are gitignored and untracked — plain, human-readable output, not gated artifacts. `.autoresearch/config.yaml` is the one exception: `init` writes `.autoresearch/*` to `.gitignore` with a `!.autoresearch/config.yaml` negation, so the run configuration itself is committed to version history (a KEEP has to stay reproducible and auditable later), while only its hash — not its content — is what the gate chain actually trusts; a hand-edit to it fails the next `eval` rather than silently loosening it.
 
 ## The worked example
 
@@ -122,7 +123,9 @@ The same live session then correctly **DISCARDed** a genuine no-op commit (a com
 | add a new, easier benchmark not present at baseline | FAIL — unmanifested file |
 | commit source AND a slowed-down benchmark body together, hoping the slow body inflates its own future baseline | after a KEEP, the base worktree is repointed to the candidate commit and then the frozen benchmark bytes are immediately restored over it — so the tampered bench body never survives into the new baseline; every future comparison still measures the same original frozen bytes on both sides |
 | let its own change fail the repo's typecheck, build, or test command | FAIL, before anything is measured |
-| edit `program.md` or `results.tsv` | scope violation — neither is ever in `scope` |
+| edit `program.md` | FAIL — scope violation, never in `scope` |
+| edit `results.tsv` | nothing stops this, and nothing needs to: it is a gitignored, untracked, human-readable log the harness only ever appends to, never a gated or tamper-evident artifact, and no gate reads it back to make a decision |
+| kill the running `eval` process (e.g. `stop -force`) while a benchmark is measuring | the detached measurement child (its own process group) is signalled and the eval lock is released before the process exits, so neither is left orphaned |
 | kill and restart the measurement process to hide a crash | CRASH is reported (exit 3), distinct from FAIL — the harness does not let a crashed child silently become "no verdict" |
 
 Anti-cheat evidence, not assertion: each row above was verified by mutation testing during development — the guard was removed, the attack was demonstrated to succeed, the guard was restored, and the attack failed again. Recorded examples: removing the measurement-commit advance made a comment-only no-op commit report KEEP; removing the post-KEEP worktree restore left a doctored benchmark in the base worktree, inflating every subsequent comparison; removing the symlink guard let a content-matching symlink survive `restore` and be mutated afterward; removing the process-group kill left a live orphaned benchmark process running after the harness exited.

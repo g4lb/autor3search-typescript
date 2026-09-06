@@ -89,10 +89,37 @@ describe('cmdInit', () => {
     expect(await exists(path.join(root, 'program.md'))).toBe(true)
 
     const gitignore = await readFile(path.join(root, '.gitignore'), 'utf8')
-    expect(gitignore).toMatch(/\.autoresearch\//)
+    // Priority 5 / spec section 13: .autoresearch/config.yaml is the one
+    // file under .autoresearch/ meant to be committed, so the directory is
+    // NOT blanket-ignored -- only its contents, with an explicit negation
+    // for config.yaml. The negation must come AFTER the pattern it
+    // un-ignores; git applies .gitignore rules in file order.
+    expect(gitignore).toMatch(/^\.autoresearch\/\*$/m)
+    expect(gitignore).not.toMatch(/^\.autoresearch\/$/m)
+    const starIdx = gitignore.indexOf('.autoresearch/*')
+    const negationIdx = gitignore.indexOf('!.autoresearch/config.yaml')
+    expect(starIdx).toBeGreaterThanOrEqual(0)
+    expect(negationIdx).toBeGreaterThan(starIdx)
     expect(gitignore).toMatch(/^results\.tsv$/m)
     expect(gitignore).toMatch(/^run\.log$/m)
     expect(gitignore).toMatch(/\*\.cpuprofile/)
+  })
+
+  it('leaves .autoresearch/config.yaml visible to git despite the rest of .autoresearch/ being ignored', async () => {
+    // makeDemoRepo already produces a real, committed git repository.
+    const root = await makeDemoRepo()
+    captureOutput()
+
+    expect(await cmdInit(ctxFor(root), [])).toBe(0)
+
+    const status = await run('git', ['status', '--porcelain', '.autoresearch/config.yaml'], {
+      cwd: root,
+      timeoutMs: 30_000,
+    })
+    // A gitignored path shows nothing at all in `git status`; an ordinary
+    // untracked file shows "?? <path>". This is what proves the negation
+    // actually works, not merely that the line is present in the file.
+    expect(status.stdout.trim()).toMatch(/^\?\? \.autoresearch\/config\.yaml$/)
   })
 
   it('discovers the demo benchmark and lists it to the user', async () => {

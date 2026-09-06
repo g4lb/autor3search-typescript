@@ -113,6 +113,24 @@ export function killGroup(pid: number | undefined, signal: NodeJS.Signals): void
   }
 }
 
+/**
+ * Every measurement/typecheck/build/test child currently spawned by THIS
+ * process, so a signal handler can reach them without any pipeline-layer
+ * plumbing. Load-bearing for `stop -force`: `eval.ts` spawns each
+ * measurement child `detached: true` so it is its own process-group leader
+ * (see `exec` below), which means it is NOT killed for free when `eval`
+ * itself receives SIGTERM. Left unhandled, `stop -force`'s SIGTERM to the
+ * eval process kills node immediately (SIGTERM's default disposition) with
+ * the benchmark child still running and the eval lock still held -- the
+ * exact orphaned-process hazard spec section 2 item 4 names explicitly.
+ */
+const activeChildPids = new Set<number>()
+
+/** Signals every currently-active child's process group, best effort. */
+export function killActiveChildren(signal: NodeJS.Signals): void {
+  for (const pid of activeChildPids) killGroup(pid, signal)
+}
+
 function exec(
   cmd: string,
   args: string[],
@@ -135,6 +153,8 @@ function exec(
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+
+    if (child.pid !== undefined) activeChildPids.add(child.pid)
 
     // A throwing `log` must not take down an unattended overnight run —
     // losing a log line is fine, losing the whole exec because a log
@@ -167,6 +187,7 @@ function exec(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (child.pid !== undefined) activeChildPids.delete(child.pid)
       resolve({
         exitCode,
         signal,

@@ -10,7 +10,24 @@ import { currentBranch } from '../gitx/git.js'
 import { detect, type PackageManager } from '../pm/detect.js'
 import type { RunCtx } from './runctx.js'
 
-const GITIGNORE_ENTRIES = ['.autoresearch/', 'results.tsv', 'run.log', '*.cpuprofile']
+/**
+ * `.autoresearch/*` plus a `!.autoresearch/config.yaml` negation, NOT a
+ * blanket `.autoresearch/` -- everything else under that directory (there is
+ * nothing else there today, but nothing prevents a future addition) stays
+ * gitignored, while `config.yaml` itself must be committed: it is the run
+ * configuration a KEEP has to stay reproducible and auditable against later
+ * (spec section 13), and only its HASH, not merely its presence on disk, is
+ * what the gate chain trusts (see `pipeline/eval.ts` gate 2). The negation
+ * line must stay listed after the pattern it un-ignores -- git applies
+ * `.gitignore` rules in file order.
+ */
+const GITIGNORE_ENTRIES = [
+  '.autoresearch/*',
+  '!.autoresearch/config.yaml',
+  'results.tsv',
+  'run.log',
+  '*.cpuprofile',
+]
 
 /** The `templates/` directory shipped alongside this package. */
 export function templatesDir(): string {
@@ -346,10 +363,13 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
     for (const b of benchmarks) process.stdout.write(`  - ${b.id}\n`)
     process.stdout.write(
       '\nwrote .autoresearch/config.yaml and program.md. Review both, then:\n' +
-        // .autoresearch/ is gitignored on purpose (it is local, machine-specific
-        // harness state, not part of the repository's history) -- only
-        // program.md and .gitignore are ever meant to be committed here.
-        '  1. git add program.md .gitignore && git commit\n' +
+        // .autoresearch/config.yaml is the one file under .autoresearch/
+        // meant to be committed -- it is the run configuration a KEEP must
+        // stay reproducible and auditable against later (spec section 13).
+        // Everything else the harness writes (baselines, locks, stop
+        // requests) lives outside the repository entirely; nothing else
+        // under .autoresearch/ exists to commit.
+        '  1. git add .autoresearch/config.yaml program.md .gitignore && git commit\n' +
         '  2. autoresearch-typescript baseline\n' +
         '  3. hand this repository and program.md to your coding agent\n',
     )

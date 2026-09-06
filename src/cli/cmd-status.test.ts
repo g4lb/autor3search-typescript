@@ -47,7 +47,7 @@ async function setup(): Promise<{ root: string; ctx: RunCtx }> {
   const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   try {
     expect(await cmdInit(ctx, [])).toBe(0)
-    await git(root, ['add', 'program.md', '.gitignore'])
+    await git(root, ['add', '.autoresearch/config.yaml', 'program.md', '.gitignore'])
     await git(root, ['commit', '-q', '-m', 'init'])
     expect(await cmdBaseline(ctx, ['-tag', TAG])).toBe(0)
   } finally {

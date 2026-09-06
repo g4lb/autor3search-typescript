@@ -42,7 +42,7 @@ import type { Benchmark } from '../discover/benchmarks.js'
 import { freezableFiles } from '../discover/files.js'
 import { findUnmanifested, restore } from '../freeze/freeze.js'
 import { hashString } from '../freeze/manifest.js'
-import { changedFiles, headCommit, isClean, repointWorktree } from '../gitx/git.js'
+import { changedFiles, headCommit, repointWorktree } from '../gitx/git.js'
 import { interleave, type Observations } from '../measure/interleave.js'
 import { appendRow, loadRows, type Row } from '../results/results.js'
 import { checkScope } from '../scope/scope.js'
@@ -306,14 +306,28 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // Captured HERE, before gate 3 ever touches the working tree: gate 3's own
   // restore intentionally leaves tracked frozen files differing from HEAD
   // (that is the whole point -- the measured content must be the frozen
-  // bytes, not whatever the agent committed), which makes `git status` dirty
-  // on its own. Checking cleanliness after that would misreport every
+  // bytes, not whatever the agent committed), which makes the tree dirty on
+  // its own. Checking cleanliness after that would misreport every
   // legitimate restore as an uncommitted-change violation. What gate 8 must
   // police is whether the AGENT's own commit left the tree clean, which is
   // exactly what this snapshot -- taken before any harness mutation -- answers.
+  //
+  // Deliberately `changedFiles(repoRoot, candidateCommit)` (HEAD), NOT
+  // `isClean` (`git status --porcelain`): `isClean` respects whatever
+  // `.gitignore` is on disk, including one the agent just wrote --
+  // `printf '*\n' > src/lib/.gitignore` hides an uncommitted, IN-SCOPE file
+  // from `git status` entirely, so `isClean` would report a clean tree
+  // while the working tree still differs from HEAD. That is the exact C1
+  // attack (measure an uncommitted edit, credit it to a commit that never
+  // contained it) surviving Priority 2's scope-gate fix by hiding from THIS
+  // gate instead: the scope gate happily lets an in-scope file through, and
+  // a gitignore-trusting clean check never sees it was never committed.
+  // `changedFiles` is already immune to this (see its own doc comment) --
+  // reusing it here means gate 8 inherits that immunity by construction,
+  // not by remembering to reimplement it a second time.
   let treeWasCleanBeforeRestore = true
   try {
-    treeWasCleanBeforeRestore = await isClean(opts.ctx.repoRoot)
+    treeWasCleanBeforeRestore = (await changedFiles(opts.ctx.repoRoot, candidateCommit)).length === 0
   } catch (e) {
     return finish(noVerdict('crash'), [], 'worktree-integrity', `could not check working tree cleanliness: ${messageOf(e)}`)
   }

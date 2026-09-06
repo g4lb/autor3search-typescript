@@ -138,6 +138,32 @@ describe('cmdBaseline', () => {
     expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
   })
 
+  // Scoped re-review finding: the dirty-tree check must not trust
+  // `.gitignore` either, for the identical reason `pipeline/eval.ts` gate 8
+  // must not (see its test of the same name). `isClean` (`git status
+  // --porcelain`) would report this tree as clean; a baseline pinned while
+  // this file sits on disk uncommitted would be exactly as unreproducible
+  // as one pinned with any other uncommitted change.
+  it('refuses a tree with an uncommitted file hidden behind an agent-created .gitignore', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    captureOutput()
+    await initAndCommit(root, ctx)
+    await mkdir(path.join(root, 'src', 'lib'), { recursive: true })
+    await writeFile(path.join(root, 'src', 'lib', '.gitignore'), '*\n', 'utf8')
+    await writeFile(path.join(root, 'src', 'lib', 'evil.ts'), 'export const evil = 1\n', 'utf8')
+    expect(await isClean(root)).toBe(true) // isClean is blind to it -- the whole point
+
+    captureOutput()
+    const code = await cmdBaseline(ctx, ['-tag', 'sep6'])
+
+    expect(code).not.toBe(0)
+    expect(stderr.join('')).toMatch(/not clean|dirty|uncommitted/i)
+    const dir = runDir(root, 'sep6')
+    expect(await exists(dir)).toBe(false)
+    expect(await branchExists(root, 'autoresearch-typescript/sep6')).toBe(false)
+  })
+
   it('refuses when no config exists, and leaves no run directory or branch', async () => {
     const root = await makeDemoRepo()
     const ctx = ctxFor(root)

@@ -440,6 +440,41 @@ describe('runEval: gate order', () => {
     expect(rows[0]?.status).toBe('fail')
   })
 
+  // The scoped re-review's finding: Priority 2 made `changedFiles` (and so
+  // the SCOPE gate) immune to an agent-created `.gitignore`, but gate 8's
+  // clean-tree check originally used `isClean` (`git status --porcelain`),
+  // which still trusts whatever `.gitignore` is on disk. A file hidden
+  // behind `printf '*\n' > src/lib/.gitignore` -- uncommitted, and INSIDE
+  // `scope` (so the scope gate has nothing to object to) -- made `isClean`
+  // report a clean tree while the working tree still differed from HEAD:
+  // the C1 attack surviving in a narrower, still-live form. Gate 8 now
+  // reuses `changedFiles` (immune by construction) instead of `isClean`.
+  it('gate 8: FAILs on an uncommitted file hidden behind an agent-created .gitignore, even though it is in scope', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    // HEAD advances past baseline.measureCommit first, exactly as in the
+    // test above, so only the clean-tree check (not "HEAD has not moved")
+    // can be what rejects this experiment.
+    await trivialCommit(root)
+
+    await mkdir(path.join(root, 'src', 'lib'), { recursive: true })
+    await writeFile(path.join(root, 'src', 'lib', '.gitignore'), '*\n', 'utf8')
+    await writeFile(path.join(root, 'src', 'lib', 'evil.ts'), 'export const evil = 1\n', 'utf8')
+
+    // A one-sided stand-in (candidate always faster), not an empty `vi.fn()`:
+    // with the check reverted to `isClean`, this reaches a real, full KEEP
+    // (verified by hand -- see the mutation evidence in final-fix-report.md)
+    // rather than merely avoiding a crash.
+    const worktreeDir2 = path.join(runDir(root, TAG), 'baseline-worktree')
+    const spy = vi.fn(async (dir: string): Promise<number> => (dir === worktreeDir2 ? 1000 : 10))
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    expect(outcome.verdict.status).toBe('fail')
+    expect(outcome.failedGate).toBe('worktree-integrity')
+    expect(outcome.message).toMatch(/not clean/)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
   it('gate 8: FAILs when HEAD has not moved past the already-recorded measureCommit', async () => {
     const { ctx } = await setup(FAST_MEASURE_PATCHES)
     // No commit made since baseline: candidateCommit === baseline.measureCommit.

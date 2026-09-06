@@ -11,11 +11,11 @@ import { hashString } from '../freeze/manifest.js'
 import {
   addWorktree,
   branchExists,
+  changedFiles,
   createBranch,
   currentBranch,
   deleteBranch,
   headCommit,
-  isClean,
   removeWorktree,
 } from '../gitx/git.js'
 import { detect } from '../pm/detect.js'
@@ -122,7 +122,16 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
     const detected = await detect(ctx.repoRoot)
     const config = await loadConfig(ctx.configPath)
 
-    if (!(await isClean(ctx.repoRoot))) {
+    // Deliberately `changedFiles(repoRoot, HEAD)` rather than `isClean`
+    // (`git status --porcelain`): `isClean` trusts whatever `.gitignore` is
+    // on disk, including one the agent just wrote -- the same blind spot
+    // fixed in `pipeline/eval.ts` gate 8, and for the identical reason. A
+    // baseline pinned while an agent-hidden, uncommitted file sits on disk
+    // is exactly as unreproducible as one pinned with any other uncommitted
+    // change; `changedFiles` (Priority 2's ignore-immune enumeration) is
+    // what actually proves nothing on disk differs from HEAD.
+    const headBeforeBaseline = await headCommit(ctx.repoRoot)
+    if ((await changedFiles(ctx.repoRoot, headBeforeBaseline)).length > 0) {
       return fail(
         'the working tree is not clean (uncommitted changes or untracked files). A baseline ' +
           'pinned to what is on disk rather than what is committed could not be reproduced by ' +

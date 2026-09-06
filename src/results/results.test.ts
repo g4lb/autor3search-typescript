@@ -4,6 +4,12 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { HEADER, RESULTS_PATH, appendRow, loadRows, summarize, type Row } from './results.js'
 
+// Spelled out independently of the imported `HEADER` constant so a typo
+// introduced into `HEADER` itself would still be caught -- if the test
+// compared against the same constant the code writes, a bug in the
+// constant and the test would agree with each other while both are wrong.
+const EXPECTED_HEADER = 'commit\tscore\tbest_bench_delta\tp_min\tstatus\treason\tdescription'
+
 async function tmp(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'ars-results-'))
 }
@@ -34,7 +40,7 @@ describe('appendRow', () => {
     await appendRow(file, row())
     const text = await readFile(file, 'utf8')
     const lines = text.split('\n').filter((l) => l.length > 0)
-    expect(lines[0]).toBe(HEADER)
+    expect(lines[0]).toBe(EXPECTED_HEADER)
     expect(lines).toHaveLength(2)
   })
 
@@ -45,7 +51,7 @@ describe('appendRow', () => {
     await appendRow(file, row({ commit: 'bbb' }))
     const text = await readFile(file, 'utf8')
     const lines = text.split('\n').filter((l) => l.length > 0)
-    expect(lines.filter((l) => l === HEADER)).toHaveLength(1)
+    expect(lines.filter((l) => l === EXPECTED_HEADER)).toHaveLength(1)
     expect(lines).toHaveLength(3)
   })
 
@@ -126,19 +132,18 @@ describe('loadRows', () => {
     expect(loaded[0]?.description).toBe('line one line two with tab carriage')
   })
 
-  it('sanitizes tabs and newlines even when they appear in status or reason', async () => {
+  it('sanitizes a tab or newline injected into status before it ever reaches disk', async () => {
+    // status/reason are closed enums now that loadRows validates them, so
+    // there's no longer a legitimate value that contains a tab or
+    // newline to round-trip -- sanitize() still runs defensively on
+    // every field regardless of type, but this is now visible only on
+    // the raw bytes written, not via a load-time round trip.
     const dir = await tmp()
     const file = path.join(dir, RESULTS_PATH)
-    await appendRow(
-      file,
-      row({
-        status: 'ke\tep\n' as Row['status'],
-        reason: 'weird\rreason' as Row['reason'],
-      }),
-    )
-    const loaded = await loadRows(file)
-    expect(loaded[0]?.status).not.toMatch(/[\t\r\n]/)
-    expect(loaded[0]?.reason).not.toMatch(/[\t\r\n]/)
+    await appendRow(file, row({ status: 'ke\tep\n' as Row['status'] }))
+    const text = await readFile(file, 'utf8')
+    const dataLine = text.split('\n').filter((l) => l.length > 0)[1] ?? ''
+    expect(dataLine.split('\t')[4]).not.toMatch(/[\t\r\n]/)
   })
 
   it('leaves a short description untouched', async () => {
@@ -210,7 +215,7 @@ describe('loadRows', () => {
   it('fails the whole load on a malformed line, naming the file and line number', async () => {
     const dir = await tmp()
     const file = path.join(dir, RESULTS_PATH)
-    await writeFile(file, `${HEADER}\nonly\ttwo\tfields\n`, 'utf8')
+    await writeFile(file, `${EXPECTED_HEADER}\nonly\ttwo\tfields\n`, 'utf8')
     await expect(loadRows(file)).rejects.toThrow(new RegExp(`${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:2:`))
     await expect(loadRows(file)).rejects.toThrow(/got 3 fields, want 7/)
   })
@@ -224,6 +229,57 @@ describe('loadRows', () => {
     const text = await readFile(file, 'utf8')
     await writeFile(file, `${text}broken\tline\n`, 'utf8')
     await expect(loadRows(file)).rejects.toThrow(/:4:/)
+  })
+
+  it('fails on a non-numeric score field rather than silently producing NaN', async () => {
+    const dir = await tmp()
+    const file = path.join(dir, RESULTS_PATH)
+    // commit, score(garbage), best_bench_delta, p_min, status, reason, description
+    await writeFile(file, `${EXPECTED_HEADER}\nabc1234\tnot-a-number\t-1.00\t0.01\tkeep\t\tdesc\n`, 'utf8')
+    await expect(loadRows(file)).rejects.toThrow(/:2:.*score/)
+  })
+
+  it('fails on a BLANK numeric field rather than silently treating it as zero', async () => {
+    // Number('') is 0 in JavaScript. Left unchecked, a torn write that
+    // leaves two adjacent tabs (an empty score field, but still 7 fields
+    // total -- the row is not short) would produce a row whose score is
+    // silently 0 rather than an obvious parse failure. A 0 kept score then
+    // collapses summarize()'s cumulative-speedup PRODUCT for the entire
+    // log to 0, with no visible anomaly -- worse than the NaN case, which
+    // at least renders as visibly broken.
+    const dir = await tmp()
+    const file = path.join(dir, RESULTS_PATH)
+    await writeFile(file, `${EXPECTED_HEADER}\nabc1234\t\t-1.00\t0.01\tkeep\t\tdesc\n`, 'utf8')
+    await expect(loadRows(file)).rejects.toThrow(/:2:.*score/)
+  })
+
+  it('fails on a blank best_bench_delta or p_min field the same way', async () => {
+    const dir = await tmp()
+    const file = path.join(dir, RESULTS_PATH)
+    await writeFile(file, `${EXPECTED_HEADER}\nabc1234\t0.9000\t\t0.01\tkeep\t\tdesc\n`, 'utf8')
+    await expect(loadRows(file)).rejects.toThrow(/:2:.*best_bench_delta/)
+
+    const file2 = path.join(dir, 'other.tsv')
+    await writeFile(file2, `${EXPECTED_HEADER}\nabc1234\t0.9000\t-1.00\t\tkeep\t\tdesc\n`, 'utf8')
+    await expect(loadRows(file2)).rejects.toThrow(/:2:.*p_min/)
+  })
+
+  it('fails on an out-of-enum status rather than letting it silently miss the "keep" filter', async () => {
+    const dir = await tmp()
+    const file = path.join(dir, RESULTS_PATH)
+    await writeFile(file, `${EXPECTED_HEADER}\nabc1234\t0.9000\t-1.00\t0.01\tbogus\t\tdesc\n`, 'utf8')
+    await expect(loadRows(file)).rejects.toThrow(/:2:.*status/)
+  })
+
+  it('fails on an out-of-enum reason on a discard row', async () => {
+    const dir = await tmp()
+    const file = path.join(dir, RESULTS_PATH)
+    await writeFile(
+      file,
+      `${EXPECTED_HEADER}\nabc1234\t1.0500\t3.00\t0.90\tdiscard\tnot_a_real_reason\tdesc\n`,
+      'utf8',
+    )
+    await expect(loadRows(file)).rejects.toThrow(/:2:.*reason/)
   })
 })
 

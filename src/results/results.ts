@@ -10,6 +10,13 @@ const FIELD_COUNT = 7
 /** Character (not byte) cap on `description`, ellipsis included. */
 const DESCRIPTION_LIMIT = 256
 
+const VALID_STATUSES: readonly Status[] = ['keep', 'discard', 'fail', 'crash']
+const VALID_REASONS: readonly DiscardReason[] = [
+  'no_significant_improvement',
+  'improvement_below_min_effect',
+  'significant_regression',
+]
+
 export interface Row {
   commit: string
   score: number
@@ -114,17 +121,67 @@ export async function appendRow(path: string, r: Row): Promise<void> {
 }
 
 /**
+ * Parses one numeric column strictly. `Number('')` is `0` in JavaScript --
+ * left unchecked, a torn write that leaves an empty field (still 7 fields
+ * total, so the field-count check alone would never catch it) would
+ * silently produce a legitimate-looking score of 0 rather than an obvious
+ * parse failure. A blank `score` on a `keep` row is the worst case: it
+ * collapses `summarize`'s cumulative-speedup PRODUCT for the ENTIRE log to
+ * 0, with no visible anomaly. So blank is checked and rejected explicitly,
+ * before ever calling `Number` on it; `Number.isFinite` then also catches
+ * genuinely non-numeric text (which parses to `NaN`) and `Infinity`.
+ */
+function parseNumberField(path: string, lineNo: number, field: string, raw: string): number {
+  if (raw.trim() === '') {
+    throw new Error(`${path}:${lineNo}: ${field}: empty field, want a number`)
+  }
+  const n = Number(raw)
+  if (!Number.isFinite(n)) {
+    throw new Error(`${path}:${lineNo}: ${field}: invalid number "${raw}"`)
+  }
+  return n
+}
+
+/**
+ * `status` must be one of the four values `Status` allows. An unrecognized
+ * status has a milder blast radius than a bad number -- it simply never
+ * matches the `'keep'` filter in `summarize`, so it can't poison the
+ * cumulative-speedup product -- but it would still let `counts` silently
+ * accumulate an unexpected key, which is the same "corrupted log
+ * masquerading as valid" failure the field-count check exists to prevent.
+ */
+function parseStatus(path: string, lineNo: number, raw: string): Status {
+  if (!VALID_STATUSES.includes(raw as Status)) {
+    throw new Error(`${path}:${lineNo}: status: unknown status "${raw}"`)
+  }
+  return raw as Status
+}
+
+/** `reason` must be empty, or one of the three `DiscardReason` values. */
+function parseReason(path: string, lineNo: number, raw: string): DiscardReason | '' {
+  if (raw === '' || VALID_REASONS.includes(raw as DiscardReason)) {
+    return raw as DiscardReason | ''
+  }
+  throw new Error(`${path}:${lineNo}: reason: unknown reason "${raw}"`)
+}
+
+/**
  * Loads every row. A missing file is an empty log, not an error -- this is
  * the state of a repository that has never run an experiment.
  *
  * Anything else is strict: a line that does not split into exactly 7
- * tab-separated fields fails the WHOLE load, naming the file and the
- * 1-based line number. Sanitizing on write (see `sanitize`) already makes
- * a malformed row nearly impossible to produce honestly, so encountering
- * one is a real signal -- a torn write, a hand edit -- not noise. Silently
- * dropping the bad row instead would let a corrupted log masquerade as a
- * short one, which is the worse failure for a file that is the sole
- * record of an unattended overnight run.
+ * tab-separated fields, or whose numeric or enum fields don't parse,
+ * fails the WHOLE load, naming the file and the 1-based line number.
+ * Sanitizing on write (see `sanitize`) already makes a malformed row
+ * nearly impossible to produce honestly, so encountering one is a real
+ * signal -- a torn write, a hand edit -- not noise. Silently dropping the
+ * bad row instead would let a corrupted log masquerade as a short one,
+ * which is the worse failure for a file that is the sole record of an
+ * unattended overnight run. The same reasoning extends past field count
+ * to field *content*: a torn write is at least as likely to garble a
+ * value as to drop a whole field, and a garbled numeric field that
+ * parses "successfully" to 0 or NaN is a worse failure than a visible
+ * parse error, since it distorts every summary silently.
  */
 export async function loadRows(path: string): Promise<Row[]> {
   let text: string
@@ -161,11 +218,11 @@ export async function loadRows(path: string): Promise<Row[]> {
     ]
     rows.push({
       commit,
-      score: Number(scoreStr),
-      bestBenchDelta: Number(deltaStr),
-      pMin: Number(pMinStr),
-      status: status as Status,
-      reason: reason as DiscardReason | '',
+      score: parseNumberField(path, lineNo, 'score', scoreStr),
+      bestBenchDelta: parseNumberField(path, lineNo, 'best_bench_delta', deltaStr),
+      pMin: parseNumberField(path, lineNo, 'p_min', pMinStr),
+      status: parseStatus(path, lineNo, status),
+      reason: parseReason(path, lineNo, reason),
       description,
     })
   }

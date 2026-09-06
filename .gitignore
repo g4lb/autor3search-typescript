@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.autoresearch/
+results.tsv
+run.log
+*.cpuprofile

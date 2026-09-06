@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -69,7 +69,39 @@ describe('snapshot and restore', () => {
     await symlink(outside, path.join(root, 'src/a.test.ts'))
 
     await expect(restore(root, dest, m)).rejects.toThrow(/symlink/)
+    // NOTE: this assertion holds regardless of the symlink guard above — it
+    // passes even with assertNotSymlink's throw disabled, because restore's
+    // `rm(abs, { force: true })` unlinks a symlink rather than following it,
+    // so the write that follows never touches `outside`. It is kept because
+    // it pins that defence-in-depth property of `rm` (it would regress if
+    // the write path were ever changed to open-and-truncate instead), NOT
+    // because it demonstrates the symlink guard is doing anything here. The
+    // guard's actual load-bearing case is the content-matching bypass below.
     expect(await readFile(outside, 'utf8')).toBe('DO NOT OVERWRITE')
+  })
+
+  it('REFUSES a symlink whose content matches the frozen bytes, which would otherwise survive restore\'s early exit', async () => {
+    const root = await repoWith({ 'src/a.test.ts': 'ORIGINAL' })
+    const dest = await tmp()
+    const m = await snapshot(root, ['src/a.test.ts'], dest)
+
+    // The agent points the frozen path at a file whose CURRENT content is
+    // byte-identical to the frozen bytes. Without the guard, restore's
+    // `readFile(abs)` follows the link, sees have === want, and takes the
+    // early `continue` — leaving the symlink in place, untouched, and
+    // absent from `changed`. The agent can then edit the link's target
+    // after restore has already run and "approved" the path.
+    const outsideDir = await tmp()
+    const shadow = path.join(outsideDir, 'shadow.ts')
+    await writeFile(shadow, 'ORIGINAL')
+    const { rm } = await import('node:fs/promises')
+    await rm(path.join(root, 'src/a.test.ts'))
+    await symlink(shadow, path.join(root, 'src/a.test.ts'))
+
+    await expect(restore(root, dest, m)).rejects.toThrow(/symlink/)
+    // Pin that we refused outright rather than silently accepting the link
+    // because its content happened to match.
+    expect((await lstat(path.join(root, 'src/a.test.ts'))).isSymbolicLink()).toBe(true)
   })
 
   it('refuses a manifest entry that escapes the repository', async () => {
@@ -93,13 +125,13 @@ describe('buildManifest', () => {
 describe('findUnmanifested', () => {
   it('flags a test file the agent added after baseline', () => {
     const m = { files: { 'src/a.test.ts': 'x' } }
-    const found = findUnmanifested('/repo', ['src/a.test.ts', 'src/easy.bench.ts'], m, [])
+    const found = findUnmanifested(['src/a.test.ts', 'src/easy.bench.ts'], m, [])
     expect(found).toEqual(['src/easy.bench.ts'])
   })
 
   it('allows a file listed in unfreeze', () => {
     const m = { files: { 'src/a.test.ts': 'x' } }
-    const found = findUnmanifested('/repo', ['src/a.test.ts', 'src/new.test.ts'], m, ['src/new.test.ts'])
+    const found = findUnmanifested(['src/a.test.ts', 'src/new.test.ts'], m, ['src/new.test.ts'])
     expect(found).toEqual([])
   })
 })

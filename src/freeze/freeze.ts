@@ -104,15 +104,14 @@ export async function restore(
  * This is what closes "add an easier benchmark": a file that looks like a
  * benchmark but was not frozen at baseline is rejected, not measured.
  *
- * `root` is part of the public signature (see task brief) but unused by this
- * implementation: every comparison here is against manifest keys and
+ * The task brief's draft signature carried a leading `repoRoot` parameter.
+ * It was genuinely dead: every comparison here is against manifest keys and
  * `unfreeze` entries, which are already repo-relative, so no filesystem
- * lookup against `root` is needed. Kept rather than dropped, since later
- * tasks may call this positionally and dropping a parameter would be a
- * breaking, unreviewed change to a documented interface.
+ * lookup was ever performed against it. Removed rather than kept as an
+ * underscore-prefixed parameter, after confirming no other task's call site
+ * depends on the four-argument form.
  */
 export function findUnmanifested(
-  root: string,
   candidates: string[],
   manifest: Manifest,
   unfreeze: string[],

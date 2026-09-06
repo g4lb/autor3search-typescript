@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -15,6 +15,38 @@ async function tmp(prefix = 'ars-invoke-'): Promise<string> {
 async function leftoverOutDirs(): Promise<string[]> {
   const entries = await readdir(tmpdir())
   return entries.filter((e) => e.startsWith('ars-out-'))
+}
+
+/**
+ * Runs `fn` with `os.tmpdir()` pointed at a fresh, private root for the
+ * duration of the call, restoring the previous value (or its absence)
+ * afterward.
+ *
+ * `runChild`'s own `mkdtemp(path.join(tmpdir(), 'ars-out-'))` reads
+ * `tmpdir()` at call time, so overriding `TMPDIR` here is enough to make
+ * its temp directory land inside our private root instead of the shared OS
+ * temp directory. That matters because the shared temp directory is not
+ * private to this test: sibling tests -- in this file and, under a full
+ * suite run, in other files running concurrently -- create their own
+ * `ars-out-*` directories via the very same `runChild`. A "before vs.
+ * after" count taken against the shared directory measures *"how many
+ * ars-out-* directories exist anywhere right now"*, which a concurrent
+ * sibling's in-flight directory can inflate between the two snapshots --
+ * a false failure with nothing wrong in the code under test. Measuring
+ * against a private root makes the count mean what the assertion claims:
+ * "this invocation's own directory was cleaned up."
+ */
+async function withPrivateTmpdir<T>(fn: () => Promise<T>): Promise<T> {
+  const root = await mkdtemp(path.join(tmpdir(), 'ars-invoke-root-'))
+  const previous = process.env['TMPDIR']
+  process.env['TMPDIR'] = root
+  try {
+    return await fn()
+  } finally {
+    if (previous === undefined) delete process.env['TMPDIR']
+    else process.env['TMPDIR'] = previous
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 describe('runChild', () => {
@@ -62,25 +94,29 @@ describe('runChild', () => {
       `export function benchHang(): number {\n  while (true) {\n    // spin forever\n  }\n}\n`,
     )
 
-    const before = await leftoverOutDirs()
-    const r = await runChild({
-      cwd: dir,
-      benchFileAbs: file,
-      fn: 'benchHang',
-      id: 'hang.bench.ts:benchHang',
-      benchtimeMs: 50,
-      warmupMs: 20,
-      timeoutMs: 500,
-      nodeArgs: [],
-    })
-    const after = await leftoverOutDirs()
+    await withPrivateTmpdir(async () => {
+      const before = await leftoverOutDirs()
+      const r = await runChild({
+        cwd: dir,
+        benchFileAbs: file,
+        fn: 'benchHang',
+        id: 'hang.bench.ts:benchHang',
+        benchtimeMs: 50,
+        warmupMs: 20,
+        timeoutMs: 500,
+        nodeArgs: [],
+      })
+      const after = await leftoverOutDirs()
 
-    expect(r.ok).toBe(false)
-    if (r.ok) return
-    expect(r.error).toMatch(/timed out/i)
-    // The temp --out directory must be cleaned up even though the child
-    // never wrote to it.
-    expect(after.length).toBe(before.length)
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.error).toMatch(/timed out/i)
+      // The temp --out directory must be cleaned up even though the child
+      // never wrote to it. Measured against a private root (see
+      // withPrivateTmpdir) so a concurrent sibling test's own in-flight
+      // ars-out-* directory can never inflate this count.
+      expect(after.length).toBe(before.length)
+    })
   }, 15_000)
 
   it('reports a child that dies without writing --out as ok:false, and cleans up its temp dir', async () => {
@@ -88,27 +124,32 @@ describe('runChild', () => {
     const file = path.join(dir, 'a.bench.ts')
     await writeFile(file, `export function benchA(): number {\n  return 1\n}\n`)
 
-    const before = await leftoverOutDirs()
-    // An unrecognized node flag makes node exit immediately with its own
-    // "bad option" error, before our script (and therefore --out) is ever
-    // reached -- a real "the child died before writing" case that is not a
-    // timeout.
-    const r = await runChild({
-      cwd: dir,
-      benchFileAbs: file,
-      fn: 'benchA',
-      id: 'a.bench.ts:benchA',
-      benchtimeMs: 50,
-      warmupMs: 20,
-      timeoutMs: 10_000,
-      nodeArgs: ['--not-a-real-node-flag'],
-    })
-    const after = await leftoverOutDirs()
+    await withPrivateTmpdir(async () => {
+      const before = await leftoverOutDirs()
+      // An unrecognized node flag makes node exit immediately with its own
+      // "bad option" error, before our script (and therefore --out) is ever
+      // reached -- a real "the child died before writing" case that is not a
+      // timeout.
+      const r = await runChild({
+        cwd: dir,
+        benchFileAbs: file,
+        fn: 'benchA',
+        id: 'a.bench.ts:benchA',
+        benchtimeMs: 50,
+        warmupMs: 20,
+        timeoutMs: 10_000,
+        nodeArgs: ['--not-a-real-node-flag'],
+      })
+      const after = await leftoverOutDirs()
 
-    expect(r.ok).toBe(false)
-    if (r.ok) return
-    expect(r.error).toMatch(/exit/i)
-    expect(after.length).toBe(before.length)
+      expect(r.ok).toBe(false)
+      if (r.ok) return
+      expect(r.error).toMatch(/exit/i)
+      // Measured against a private root (see withPrivateTmpdir) so a
+      // concurrent sibling test's own in-flight ars-out-* directory can
+      // never inflate this count.
+      expect(after.length).toBe(before.length)
+    })
   })
 
   it('passes nodeArgs to node directly, not through a wrapper that swallows them', async () => {

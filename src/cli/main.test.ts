@@ -208,6 +208,61 @@ describe('main', () => {
     expect(stdout.join('')).toMatch(/eval/)
   })
 
+  // Ruling 34, same reasoning as doctor/baseline/eval above: status must be
+  // proven reachable through main's own dispatch table, not merely
+  // implemented and tested in its own file. `doctor` was implemented,
+  // tested, and unreachable for exactly this reason.
+  it('dispatches "status" through main -- registered, not merely implemented', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+    expect(await main(['-C', root, 'init'])).toBe(0)
+    await git(root, ['add', 'program.md', '.gitignore'])
+    await git(root, ['commit', '-q', '-m', 'init'])
+    captureOutput()
+    expect(await main(['-C', root, 'baseline', '-tag', 'sep6'])).toBe(0)
+
+    captureOutput()
+    const code = await main(['-C', root, 'status', '-tag', 'sep6'])
+
+    expect(code).toBe(0)
+    // Something recognisable from status's own output, not just a zero exit
+    // code (which an unknown-command path could also produce by accident).
+    expect(stdout.join('')).toMatch(/tag "sep6"/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  it('lists "status" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/status/)
+  })
+
+  // Ruling 34, same reasoning as above.
+  it('dispatches "stop" through main -- registered, not merely implemented', async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+    expect(await main(['-C', root, 'init'])).toBe(0)
+    await git(root, ['add', 'program.md', '.gitignore'])
+    await git(root, ['commit', '-q', '-m', 'init'])
+    captureOutput()
+    expect(await main(['-C', root, 'baseline', '-tag', 'sep6'])).toBe(0)
+
+    captureOutput()
+    const code = await main(['-C', root, 'stop', '-tag', 'sep6'])
+
+    expect(code).toBe(0)
+    expect(stdout.join('')).toMatch(/stop requested for tag "sep6"/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  it('lists "stop" in --help output', async () => {
+    captureOutput()
+    const code = await main(['--help'])
+    expect(code).toBe(2)
+    expect(stdout.join('')).toMatch(/stop/)
+  })
+
   // Ruling 34, extended: the mutation evidence for the doctor reachability
   // test also showed that HELP and COMMANDS are two independent strings
   // that can silently disagree -- removing a COMMANDS entry broke dispatch

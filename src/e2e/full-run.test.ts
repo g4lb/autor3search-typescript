@@ -10,9 +10,27 @@ import { CONFIG_PATH } from '../config/schema.js'
 import { headCommit } from '../gitx/git.js'
 import { RESULTS_PATH, loadRows } from '../results/results.js'
 import { ok, run } from '../runner/exec.js'
+import type { DiscardReason } from '../verdict/verdict.js'
 import { type BaselineRecord, readBaseline } from '../state/baseline.js'
 import { runDir, STATE_HOME_ENV } from '../state/home.js'
 import { makeDemoRepo } from '../testutil/demo.js'
+
+/**
+ * Mirrors verdict.ts's `DiscardReason` union. `satisfies` catches a reason
+ * renamed or removed there; the `never` line below catches one ADDED there,
+ * which `satisfies` alone would let through silently -- so this list cannot
+ * drift out of sync with the union in either direction.
+ */
+const DISCARD_REASONS = [
+  'no_significant_improvement',
+  'improvement_below_min_effect',
+  'significant_regression',
+] as const satisfies readonly DiscardReason[]
+type _AllReasonsListed = Exclude<DiscardReason, (typeof DISCARD_REASONS)[number]> extends never
+  ? true
+  : never
+const _allReasonsListed: _AllReasonsListed = true
+void _allReasonsListed
 
 /**
  * This is the project's own proof-of-life: it drives the real CLI dispatch
@@ -231,8 +249,18 @@ describe.skipIf(process.env['CI_SKIP_INSTALL'] === '1')(
         if (status === 'keep') {
           expect(after.measureCommit).toBe(noopHead)
         } else {
-          expect(discardJson['reason']).toBe('no_significant_improvement')
-          expect(rows[1]?.reason).toBe('no_significant_improvement')
+          // NOT pinned to one reason. A genuine no-op is measured, not
+          // simulated, so timing noise decides WHICH discard reason it earns
+          // -- under parallel test load this test really did produce
+          // `significant_regression` instead of `no_significant_improvement`.
+          // Pinning the string made the test flaky without adding safety: the
+          // claim it exists to defend is that the no-op was not credited as a
+          // win, and that is carried by the measureCommit assertions below.
+          // What IS deterministic, and worth keeping, is that the reason is a
+          // declared discard reason and that the --json output and the
+          // results row report the SAME one -- a mismatch there is a real bug.
+          expect(DISCARD_REASONS).toContain(discardJson['reason'])
+          expect(rows[1]?.reason).toBe(discardJson['reason'])
           expect(after.measureCommit).toBe(fixedHead) // did NOT advance again
           expect(after.measureCommit).not.toBe(noopHead)
         }

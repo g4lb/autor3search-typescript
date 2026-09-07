@@ -832,13 +832,32 @@ describe('runEval: worktree self-heal (I6)', () => {
     // evaluate (gate 8's other check).
     await trivialCommit(root)
 
-    const secondOutcome = await runEval({ ctx, tag: TAG, description: 'after simulated crash' })
+    // Both sides measure identically, so this second eval DISCARDs
+    // deterministically. That matters for what is being asserted: gate 8's
+    // self-heal runs BEFORE measurement and is fully exercised either way,
+    // but a KEEP would then advance the worktree AGAIN, past fixedHead, and
+    // the final head would no longer say anything about the repair. With
+    // real timing this test really did flake that way under parallel load --
+    // and worse, a stale (unrepaired) worktree makes the candidate look
+    // dramatically faster and KEEP, so an assertion tolerant of KEEP stops
+    // detecting the very bug this test exists for. Pinning DISCARD keeps the
+    // final head a clean read of what the self-heal did.
+    const equalMeasure = async (): Promise<number> => 100
+
+    const secondOutcome = await runEval({
+      ctx,
+      tag: TAG,
+      description: 'after simulated crash',
+      measureOne: equalMeasure,
+    })
+    expect(secondOutcome.verdict.status).toBe('discard')
 
     // No FAIL demanding -force: the mismatch was repaired automatically.
     expect(secondOutcome.failedGate).not.toBe('worktree-integrity')
     expect(secondOutcome.warnings.join(' ')).toMatch(/repointed and restored automatically/)
     // The repair actually happened: the worktree is now at the commit
     // baseline.measureCommit already named, not the stale one.
+    expect(await headCommit(worktreeDir)).not.toBe(beforeFix.measureCommit)
     expect(await headCommit(worktreeDir)).toBe(fixedHead)
   })
 

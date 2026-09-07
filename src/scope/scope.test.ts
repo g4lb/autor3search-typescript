@@ -116,3 +116,114 @@ describe('checkScope', () => {
     expect(checkScope([CONFIG_PATH], SCOPE)).toEqual([])
   })
 })
+
+/**
+ * The previous implementation, verbatim, kept as a reference oracle.
+ *
+ * matchGlob was rewritten from this regexp compilation to a memoized search
+ * because the regexp backtracked exponentially (see matchGlob's own comment
+ * for the measured numbers). The rewrite had to preserve the semantics of a
+ * SECURITY gate exactly -- a subtle difference either widens what the agent
+ * may edit or blocks work it should be allowed to do, and neither would be
+ * obvious from the 20-odd hand-written cases above. Differential testing
+ * against the original is what makes "identical behaviour" a checked claim
+ * rather than an assertion.
+ */
+function oldMatchGlob(pattern: string, p: string): boolean {
+  let re = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!
+    if (c === '*') {
+      if (pattern[i + 1] === '*') {
+        if (pattern[i + 2] === '/') {
+          re += '(?:.*/)?'
+          i += 2
+        } else {
+          re += '.*'
+          i += 1
+        }
+      } else {
+        re += '[^/]*'
+      }
+    } else if (c === '?') {
+      re += '[^/]'
+    } else {
+      re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    }
+  }
+  return new RegExp(`^${re}$`).test(p)
+}
+
+describe('matchGlob: rewritten from a backtracking regexp', () => {
+  it('agrees with the previous implementation across random patterns and paths', () => {
+    const alphabet = ['a', 'b', '/', '.', 'x', 'ts']
+    // Deterministic: a fixed-seed LCG, so a failure is reproducible rather
+    // than a one-off a rerun makes disappear.
+    let seed = 0x2f6e2b1
+    const rnd = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      return seed % n
+    }
+
+    let checked = 0
+    for (let i = 0; i < 20_000; i++) {
+      let pattern = ''
+      let globstars = 0
+      const plen = 1 + rnd(9)
+      for (let k = 0; k < plen; k++) {
+        const r = rnd(10)
+        // `**` is capped only because the OLD implementation is the oracle
+        // and more than a few make IT hang -- which is the whole reason for
+        // the rewrite. The performance test below covers the uncapped case.
+        if (r < 2 && globstars < 3) {
+          pattern += '**'
+          globstars++
+        } else if (r < 4) pattern += '*'
+        else if (r < 5) pattern += '?'
+        else pattern += alphabet[rnd(alphabet.length)]
+      }
+      let subject = ''
+      const slen = 1 + rnd(12)
+      for (let k = 0; k < slen; k++) subject += alphabet[rnd(alphabet.length)]
+
+      expect(matchGlob(pattern, subject), `pattern=${pattern} subject=${subject}`).toBe(
+        oldMatchGlob(pattern, subject),
+      )
+      checked++
+    }
+    expect(checked).toBe(20_000)
+  })
+
+  // The rewrite's OWN regression: the first version used a recursive
+  // helper, whose depth is driven by the pattern's token count. Patterns
+  // come from config with no length limit, so it threw RangeError
+  // ("Maximum call stack size exceeded") at ~8k tokens -- from inside the
+  // gate that decides what the agent may edit, as a crash rather than a
+  // clean refusal. The matcher is iterative now and has no such ceiling.
+  it('matches very long patterns without exhausting the stack', () => {
+    for (const len of [4096, 8192, 20_000]) {
+      const same = 'a'.repeat(len)
+      expect(() => matchGlob(same, same), `len=${len}`).not.toThrow()
+      expect(matchGlob(same, same)).toBe(true)
+      expect(matchGlob(same, `${same}b`)).toBe(false)
+    }
+  })
+
+  // The bug itself. On this machine the old implementation took 18.7s for
+  // the first pattern and 88s for the second; a generous ceiling here still
+  // fails by three orders of magnitude if the backtracking ever returns.
+  it('matches pathological patterns in bounded time instead of backtracking', () => {
+    const deepPath = `src/${'a/'.repeat(30)}z.js`
+    const cases = [
+      `src/${'**/'.repeat(10)}*.ts`,
+      `${'**/'.repeat(10)}x`,
+      `src/${'**/a/'.repeat(10)}*.ts`,
+    ]
+    for (const pattern of cases) {
+      const started = performance.now()
+      matchGlob(pattern, deepPath)
+      const elapsed = performance.now() - started
+      expect(elapsed, `pattern=${pattern} took ${elapsed.toFixed(1)}ms`).toBeLessThan(1000)
+    }
+  })
+})

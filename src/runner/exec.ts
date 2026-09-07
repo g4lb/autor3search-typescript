@@ -144,6 +144,63 @@ function resolveExecutable(cmd: string): string {
   return cmd
 }
 
+/**
+ * Quotes one argument for a Windows command line.
+ *
+ * Windows does not pass an argv array to a process: it passes ONE string,
+ * and each program parses it. These are the rules the C runtime documents
+ * and that `CommandLineToArgvW` implements -- backslashes are literal
+ * except when they precede a quote, where they must be doubled.
+ */
+export function quoteForWindows(arg: string): string {
+  if (arg !== '' && !/[\s"^&|<>()%!]/.test(arg)) return arg
+  // Double only the backslashes that run up against a quote (or the end),
+  // then wrap. Doubling every backslash would corrupt ordinary paths.
+  const escaped = arg.replace(/(\\*)("|$)/g, (_m, slashes: string, quote: string) =>
+    quote === '"' ? `${slashes}${slashes}\\"` : `${slashes}${slashes}`,
+  )
+  return `"${escaped}"`
+}
+
+/**
+ * How to actually launch `cmd` with `args` on this platform.
+ *
+ * The awkward case is Windows batch wrappers. npm, npx, yarn and pnpm are
+ * all `.cmd` files there, and since CVE-2024-27980 Node REFUSES to spawn a
+ * `.cmd` or `.bat` without a shell -- `spawn` fails with EINVAL. So they
+ * must go through `cmd.exe` explicitly.
+ *
+ * Not `shell: true`, which would be the one-line version: with that option
+ * Node concatenates the command and arguments into one string with no
+ * quoting at all, so any argument containing a space, a quote or a cmd
+ * metacharacter is re-parsed as syntax. Arguments here are repository
+ * paths, benchmark ids and config-derived strings; "C:\\Users\\Some One\\repo"
+ * alone would break, and `&` in a path would execute. Instead each argument
+ * is quoted for the Windows convention and handed to `cmd.exe /d /s /c`
+ * with `windowsVerbatimArguments`, which tells Node to pass the line
+ * through exactly as built rather than re-quoting it.
+ *
+ * `/d` skips AutoRun commands from the registry -- otherwise whatever a
+ * machine has configured there runs before every measurement.
+ */
+function launchSpec(
+  cmd: string,
+  args: readonly string[],
+): { file: string; args: string[]; verbatim: boolean } {
+  const resolved = resolveExecutable(cmd)
+  const isBatch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved)
+  if (!isBatch) return { file: resolved, args: [...args], verbatim: false }
+
+  const line = [resolved, ...args].map(quoteForWindows).join(' ')
+  return {
+    file: process.env['ComSpec'] ?? 'cmd.exe',
+    // The outer quotes around the whole line are cmd's own convention for
+    // /c: with them, cmd strips them and runs the rest verbatim.
+    args: ['/d', '/s', '/c', `"${line}"`],
+    verbatim: true,
+  }
+}
+
 export function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   if (pid === undefined || pid <= 1) return
 
@@ -202,11 +259,16 @@ function exec(
     let settled = false
 
     // `useShell` commands are shell syntax by contract and must not be
-    // path-resolved; everything else is a literal executable name.
-    const child = spawn(useShell ? cmd : resolveExecutable(cmd), args, {
+    // path-resolved or quoted; everything else is a literal executable
+    // name with a literal argv.
+    const spec = useShell
+      ? { file: cmd, args: [...args], verbatim: false }
+      : launchSpec(cmd, args)
+    const child = spawn(spec.file, spec.args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       shell: useShell,
+      windowsVerbatimArguments: spec.verbatim,
       // A new process group is what makes killGroup able to reach
       // grandchildren. Without it, a benchmark spawned by a test runner
       // survives the timeout and corrupts every later measurement.

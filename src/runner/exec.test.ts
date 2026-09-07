@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Capture, MAX_CAPTURED_CHARS, ok, run, runShell, tail } from './exec.js'
+import { Capture, MAX_CAPTURED_CHARS, ok, quoteForWindows, run, runShell, tail } from './exec.js'
 
 const NODE = process.execPath
 
@@ -139,5 +139,58 @@ describe('Capture', () => {
     c.push('y'.repeat(MAX_CAPTURED_CHARS))
     expect(c.truncated).toBe(false)
     expect(c.toString().length).toBe(MAX_CAPTURED_CHARS)
+  })
+})
+
+/**
+ * Windows does not pass an argv ARRAY to a process: it passes one string,
+ * which each program re-parses. Since CVE-2024-27980 Node refuses to spawn
+ * a `.cmd`/`.bat` without a shell, so npm on Windows has to be launched
+ * through `cmd.exe` with a hand-built command line -- which makes this
+ * function the boundary between "argument" and "syntax".
+ *
+ * `shell: true` was the one-line alternative and is why this exists: Node
+ * concatenates with no quoting under that option, so a repository path
+ * containing a space would break and one containing `&` would execute.
+ *
+ * These run on every platform on purpose. The behaviour is a pure string
+ * transform, and a rule that only gets exercised on the one OS none of us
+ * develops on is a rule nobody checks.
+ */
+describe('quoteForWindows', () => {
+  it('leaves ordinary arguments untouched', () => {
+    expect(quoteForWindows('foo')).toBe('foo')
+    expect(quoteForWindows('--tag=sep7')).toBe('--tag=sep7')
+    // Backslashes alone are not special -- ordinary Windows paths must not
+    // be quoted, or every path in a log becomes unreadable.
+    expect(quoteForWindows('C:\\Users\\gal\\repo')).toBe('C:\\Users\\gal\\repo')
+  })
+
+  it('quotes anything holding a space or a cmd metacharacter', () => {
+    expect(quoteForWindows('a b')).toBe('"a b"')
+    expect(quoteForWindows('a&b')).toBe('"a&b"')
+    expect(quoteForWindows('a|b')).toBe('"a|b"')
+    expect(quoteForWindows('a>b')).toBe('"a>b"')
+    // Empty must still occupy a slot, or the callee's argv silently shifts.
+    expect(quoteForWindows('')).toBe('""')
+  })
+
+  it('escapes embedded quotes', () => {
+    expect(quoteForWindows('he said "hi"')).toBe('"he said \\"hi\\""')
+  })
+
+  // The one that actually bites. A quoted argument ending in a backslash
+  // would have that backslash escape the CLOSING quote, so the argument
+  // swallows the next one -- turning `<path with space>\` plus `--force`
+  // into a single argument, or worse, into syntax.
+  it('doubles backslashes that would otherwise escape the closing quote', () => {
+    expect(quoteForWindows('C:\\Some One\\')).toBe('"C:\\Some One\\\\"')
+    expect(quoteForWindows('a b\\\\')).toBe('"a b\\\\\\\\"')
+  })
+
+  it('leaves interior backslashes alone even when quoting', () => {
+    // Doubling every backslash instead of only the ones before a quote
+    // would corrupt ordinary paths into unreachable ones.
+    expect(quoteForWindows('C:\\Some One\\repo')).toBe('"C:\\Some One\\repo"')
   })
 })

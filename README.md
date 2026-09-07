@@ -13,7 +13,7 @@ paste this:
 Install and run autor3search-typescript on this repository, then optimize it.
 
 Setup:
-1. npm install --save-dev autor3search-typescript
+1. npm install --save-dev autor3search-typescript@^0.2.0
 2. npx autor3search-typescript init
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
    this tool can only optimize what it can measure.
@@ -22,6 +22,8 @@ Setup:
    Show me any warnings. If the machine looks unfit to measure, stop and ask me
    before continuing.
 5. npx autor3search-typescript baseline -tag <today, e.g. sep7>
+   This runs your install command once per worktree, so dependency install
+   time and node_modules disk use both double. That is expected.
 
 Then:
 6. Read program.md in this repository, in full. It is your instruction set for
@@ -96,7 +98,7 @@ An unattended loop that, commit by commit:
 ## Quick start
 
 ```bash
-npm install --save-dev autor3search-typescript
+npm install --save-dev autor3search-typescript@^0.2.0
 npx autor3search-typescript init
 # review .autor3search/config.yaml and program.md, then:
 git add .autor3search/config.yaml program.md .gitignore && git commit -m "chore: add autor3search-typescript"

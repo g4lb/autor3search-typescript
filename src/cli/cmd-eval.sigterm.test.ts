@@ -61,8 +61,17 @@ describe('installSigtermHandler', () => {
     await expect(readFile(lockPath(stateDir), 'utf8')).rejects.toThrow()
 
     const result = await longRunning
-    // Killed rather than left running to hit its own 30s timeout.
-    expect(result.signal).toBe('SIGTERM')
+    // Killed rather than left running to hit its own 30s timeout. Windows
+    // has no POSIX signals, so `killGroup` there uses `taskkill /T /F`,
+    // which tears down the tree but reports no signal -- the child exits
+    // non-zero with `signal: null`. The claim under test is that the child
+    // was killed, not which mechanism killed it.
+    if (process.platform === 'win32') {
+      expect(result.signal).toBeNull()
+      expect(result.exitCode).not.toBe(0)
+    } else {
+      expect(result.signal).toBe('SIGTERM')
+    }
     expect(result.timedOut).toBe(false)
   }, 10_000)
 })

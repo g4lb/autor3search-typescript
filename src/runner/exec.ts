@@ -1,4 +1,6 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { statSync } from 'node:fs'
+import path from 'node:path'
 
 /**
  * Largest output we retain per stream, in characters (UTF-16 code units),
@@ -99,8 +101,64 @@ export class Capture {
  * hardening it for a new edge case) now cannot diverge between the two call
  * sites by simply being forgotten in one of them.
  */
+/**
+ * The executable to hand `spawn`, resolved for Windows.
+ *
+ * On Windows `npm` is `npm.cmd`, and CreateProcess does not consult PATHEXT
+ * the way a shell does -- so `spawn('npm', args)` fails with ENOENT and the
+ * tool could not install, build, typecheck or detect a package manager
+ * there at all. The README documented Windows support the whole time; a CI
+ * matrix covering it is what finally said otherwise.
+ *
+ * Resolved by searching PATH ourselves rather than by passing
+ * `shell: true`. A shell would fix the ENOENT and simultaneously undo the
+ * reason `run` takes an argv ARRAY: with a shell, every argument is
+ * re-parsed as shell syntax, and arguments here include repository paths
+ * and benchmark ids. `runShell` exists for the config-supplied command
+ * strings that are meant to be shell syntax; this path must stay literal.
+ *
+ * A no-op on POSIX, and on any command already carrying a path or an
+ * extension.
+ */
+function resolveExecutable(cmd: string): string {
+  if (process.platform !== 'win32') return cmd
+  if (cmd.includes('/') || cmd.includes('\\') || path.extname(cmd) !== '') return cmd
+
+  const exts = (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((e) => e.trim())
+    .filter((e) => e !== '')
+  for (const dir of (process.env['PATH'] ?? '').split(path.delimiter).filter((d) => d !== '')) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, cmd + ext)
+      try {
+        if (statSync(candidate).isFile()) return candidate
+      } catch {
+        // Not here; keep looking. A PATH entry that does not exist is
+        // ordinary on Windows, not an error worth surfacing.
+      }
+    }
+  }
+  // Unresolved: hand back the original so spawn reports its own ENOENT,
+  // which names the command the caller asked for.
+  return cmd
+}
+
 export function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   if (pid === undefined || pid <= 1) return
+
+  // Windows has no process groups and no POSIX signals: `process.kill(-pid)`
+  // throws, and the single-process fallback below would leave every
+  // grandchild running -- a benchmark spawned by a test runner surviving a
+  // timeout is precisely the orphan that corrupts later measurements.
+  // `taskkill /T` walks the tree; `/F` is required because there is no
+  // graceful signal to send. Synchronous so it completes before the caller
+  // moves on, matching `process.kill`'s semantics on POSIX.
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    return
+  }
+
   try {
     process.kill(-pid, signal)
   } catch {
@@ -143,7 +201,9 @@ function exec(
     let timedOut = false
     let settled = false
 
-    const child = spawn(cmd, args, {
+    // `useShell` commands are shell syntax by contract and must not be
+    // path-resolved; everything else is a literal executable name.
+    const child = spawn(useShell ? cmd : resolveExecutable(cmd), args, {
       cwd: opts.cwd,
       env: opts.env ?? process.env,
       shell: useShell,

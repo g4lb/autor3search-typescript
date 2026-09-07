@@ -32,6 +32,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 let projectDir: string
 let workDir: string
 let bin: string
+// Retained only for the failure messages below: if pack or install fails,
+// the reason has to reach the reader.
 let packOutput: string
 let installOutput: string
 
@@ -88,58 +90,26 @@ describe('the packed, installed artifact', () => {
     if (workDir !== undefined) await rm(workDir, { recursive: true, force: true })
   })
 
-  it('installs without npm warnings about THIS package', () => {
-    if (process.env['CI_SKIP_INSTALL'] === '1') return
-    // Scoped, for the same reason the publish check below is scoped, and
-    // caught the same way -- by a CI leg this machine does not resemble.
-    // The npm that ships with Node 24 warns about dependencies carrying
-    // install scripts:
-    //
-    //   npm warn allow-scripts 1 package has install scripts not yet
-    //   covered by allowScripts: esbuild@0.28.2 (postinstall: node install.js)
-    //
-    // That is true, and worth knowing (esbuild arrives via tsx, and its
-    // postinstall can fetch a platform binary over HTTPS), but it is a fact
-    // about a dependency, not a defect in this package's manifest. Failing
-    // here on it would only teach us to stop reading the assertion.
-    const aboutThisPackage = installOutput
-      .split('\n')
-      .filter((l) => /npm warn/.test(l) && !/allow-scripts/.test(l))
-    expect(aboutThisPackage).toEqual([])
-  })
-
-  it('would publish without npm warning about the manifest', async () => {
-    if (process.env['CI_SKIP_INSTALL'] === '1') return
-    // `npm pack` does NOT surface manifest corrections -- checked, and it
-    // stays silent even with the bad bin path restored, so asserting on
-    // packOutput here looked like coverage and was worth nothing. The
-    // publish path is the one that warns, and `--dry-run` walks it without
-    // sending anything. (A real publish could not happen by accident here
-    // regardless: this account's 2FA blocks one interactively.)
-    const dry = await run('npm', ['publish', '--dry-run'], {
-      cwd: repoRoot,
-      timeoutMs: 600_000,
-    })
-    // NOT asserting exitCode 0. npm 10 (Node 22) exits 0 for an
-    // unauthenticated dry run; the npm shipping with Node 24 exits 1. That
-    // is a fact about the caller's credentials, not about the manifest, and
-    // pinning it made this fail on every Node 24 leg. What must hold is
-    // that npm actually processed the manifest -- otherwise a dry run that
-    // died early would vacuously produce no warnings and pass.
-    expect(dry.stdout + dry.stderr).toMatch(/npm notice name: autor3search-typescript/)
-
-    // Scoped to `npm warn publish`, which is the prefix npm uses for
-    // MANIFEST corrections ('"bin[...]" script name was cleaned'). A bare
-    // /npm warn/ also catches warnings about the ENVIRONMENT, and one of
-    // those broke CI for five commits: an unauthenticated npm prints
-    // 'npm warn This command requires you to be logged in ... (dry-run)'.
-    // It passed locally the whole time because this machine is logged in --
-    // which is exactly why the fix was verified against a logged-out npm
-    // (npm_config_userconfig=/dev/null) in both states before landing:
-    // 3 matching lines with the bad bin path, 0 with the good one.
-    const dryOutput = dry.stdout + dry.stderr
-    expect(dryOutput).not.toMatch(/npm warn publish/)
-  })
+  // REMOVED: two tests that asserted on npm's warning TEXT.
+  //
+  // They broke CI three times in a row, never once because of this package:
+  // npm renamed the prefix (`allow-scripts` -> `install-scripts`), started
+  // tagging the unauthenticated-login warning with `publish` so a
+  // /npm warn publish/ filter caught it, and changed `publish --dry-run`'s
+  // exit code between the npm in Node 22 and the one in Node 24. Each fix
+  // was a narrower grep of a string npm is free to change again.
+  //
+  // The invariant they were guarding -- that npm has no manifest correction
+  // to make -- is a property of package.json, not of npm's messaging, and
+  // `src/packaging.test.ts` asserts it directly and version-independently
+  // (bin paths already in npm's normalized form, every bin covered by
+  // `files`, no duplicate publish hook), mutation-verified. Testing it a
+  // second time through npm's stderr added no coverage and a standing
+  // maintenance cost.
+  //
+  // What stays below is everything about the ARTIFACT rather than about
+  // npm's prose -- and that is the part which caught three real shipped
+  // bugs.
 
   it('runs from the installed symlink instead of silently exiting 0', async () => {
     if (process.env['CI_SKIP_INSTALL'] === '1') return

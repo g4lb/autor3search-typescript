@@ -371,6 +371,41 @@ describe('runEval: gate order', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
+  // The three command gates were merged into one shared helper driven by an
+  // ordered list, which makes their ORDER a piece of data that a careless
+  // edit can reorder silently. Nothing tested it: reordering test ahead of
+  // typecheck left all 35 tests in this file green. Order is what decides
+  // which failure the human is told about first, and "your code does not
+  // compile" is a better answer than whatever a test runner makes of code
+  // that does not compile.
+  it('gates 5-7: reports the FIRST failing gate, so typecheck beats test', async () => {
+    const { ctx } = await setup({
+      typecheck_command: JSON.stringify('node -e "process.exit(1)"'),
+      build_command: JSON.stringify('node -e "process.exit(1)"'),
+      test_command: JSON.stringify('node -e "process.exit(1)"'),
+    })
+    const spy = vi.fn()
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: spy })
+
+    // All three would fail; only the first is reported.
+    expect(outcome.verdict.status).toBe('fail')
+    expect(outcome.failedGate).toBe('typecheck')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('gates 5-7: build is reported before test when typecheck is skipped', async () => {
+    const { ctx } = await setup({
+      typecheck_command: JSON.stringify(''),
+      build_command: JSON.stringify('node -e "process.exit(1)"'),
+      test_command: JSON.stringify('node -e "process.exit(1)"'),
+    })
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: vi.fn() })
+
+    expect(outcome.failedGate).toBe('build')
+  })
+
   it('gate 5: an empty typecheck command SKIPS the gate rather than failing it', async () => {
     // The demo fixture ships with no tsconfig.json, so cmd-init generates an
     // empty typecheck_command -- exactly the case this gate must not treat

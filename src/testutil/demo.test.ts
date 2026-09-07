@@ -43,8 +43,14 @@ describe('makeDemoRepo', () => {
 
       const test = await run('npm', ['test'], { cwd: root, timeoutMs: 60_000 })
       expect(ok(test)).toBe(true)
-      expect(test.stdout).toMatch(/# pass 3/)
-      expect(test.stdout).toMatch(/# fail 0/)
+      // `node --test`'s DEFAULT REPORTER changed between Node 22 and 24:
+      // 22 emits TAP (`# pass 3`), 24 emits the spec reporter (`ℹ pass 3`).
+      // Pinning one spelling made this a Node-version test rather than a
+      // demo-fixture test, and it failed on every platform under Node 24 --
+      // caught the day the CI matrix started covering 24 at all. Accept
+      // either marker; the COUNTS are what this test is about.
+      expect(test.stdout).toMatch(/[#ℹ]\s*pass 3/)
+      expect(test.stdout).toMatch(/[#ℹ]\s*fail 0/)
     },
     120_000,
   )

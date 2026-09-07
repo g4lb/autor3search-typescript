@@ -173,6 +173,43 @@ export async function runEval(opts: EvalOptions): Promise<EvalOutcome> {
   }
 }
 
+/**
+ * One shell-command gate (typecheck, build, test).
+ *
+ * These were three near-identical blocks differing only in the command, the
+ * gate name, and whether an empty command means "skip". Sharing them means a
+ * fix to one -- the message, the timeout, which stream gets reported --
+ * cannot silently miss the other two.
+ *
+ * `required` is not cosmetic. typecheck and build are legitimately optional,
+ * and an empty command skips them. The test command must always run: config
+ * validation refuses an empty one, and folding all three into a single
+ * "skip when empty" rule would quietly turn any future gap in that
+ * validation into a SKIPPED test gate -- the one gate the entire verdict
+ * depends on. Stated as a flag so the difference survives the merge.
+ *
+ * Returns null when the gate passes or is skipped, otherwise the failure to
+ * report; the caller owns `finish` and the exit code.
+ */
+async function runCommandGate(o: {
+  /** Typed against GateName, not string: a typo here would otherwise reach
+   *  results.tsv as a gate nobody can grep for. */
+  name: Extract<GateName, 'typecheck' | 'build' | 'test'>
+  command: string
+  required: boolean
+  cwd: string
+  timeoutMs: number
+  log: (chunk: string) => void
+}): Promise<{ gate: GateName; message: string } | null> {
+  if (!o.required && o.command.trim() === '') return null
+  const r = await runShell(o.command, { cwd: o.cwd, timeoutMs: o.timeoutMs, log: o.log })
+  if (ok(r)) return null
+  return {
+    gate: o.name,
+    message: `${o.name} command failed (${o.command}, exit ${r.exitCode}): ${tail(r.stderr || r.stdout, 40)}`,
+  }
+}
+
 async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   const log = opts.log ?? ((): void => {})
   const worktreeDir = path.join(dir, WORKTREE_DIRNAME)
@@ -373,43 +410,21 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
 
   const timeoutMs = parseDuration(config.timeout)
 
-  // --- Gate 5: typecheck (skipped when empty).
-  if (config.typecheckCommand.trim() !== '') {
-    const r = await runShell(config.typecheckCommand, { cwd: opts.ctx.repoRoot, timeoutMs, log })
-    if (!ok(r)) {
-      return finish(
-        noVerdict('fail'),
-        [],
-        'typecheck',
-        `typecheck command failed (${config.typecheckCommand}, exit ${r.exitCode}): ${tail(r.stderr || r.stdout, 40)}`,
-      )
-    }
-  }
-
-  // --- Gate 6: build (skipped when empty).
-  if (config.buildCommand.trim() !== '') {
-    const r = await runShell(config.buildCommand, { cwd: opts.ctx.repoRoot, timeoutMs, log })
-    if (!ok(r)) {
-      return finish(
-        noVerdict('fail'),
-        [],
-        'build',
-        `build command failed (${config.buildCommand}, exit ${r.exitCode}): ${tail(r.stderr || r.stdout, 40)}`,
-      )
-    }
-  }
-
-  // --- Gate 7: test (never empty -- enforced by config validation).
-  {
-    const r = await runShell(config.testCommand, { cwd: opts.ctx.repoRoot, timeoutMs, log })
-    if (!ok(r)) {
-      return finish(
-        noVerdict('fail'),
-        [],
-        'test',
-        `test command failed (${config.testCommand}, exit ${r.exitCode}): ${tail(r.stderr || r.stdout, 40)}`,
-      )
-    }
+  // --- Gates 5, 6, 7: typecheck, build, test. Order is load-bearing: a
+  // change that does not compile should be reported as a typecheck failure,
+  // not as whatever the test command makes of it.
+  const commandGates = [
+    { name: 'typecheck', command: config.typecheckCommand, required: false },
+    { name: 'build', command: config.buildCommand, required: false },
+    { name: 'test', command: config.testCommand, required: true },
+  ] as const satisfies readonly {
+    name: Extract<GateName, 'typecheck' | 'build' | 'test'>
+    command: string
+    required: boolean
+  }[]
+  for (const gate of commandGates) {
+    const failure = await runCommandGate({ ...gate, cwd: opts.ctx.repoRoot, timeoutMs, log })
+    if (failure !== null) return finish(noVerdict('fail'), [], failure.gate, failure.message)
   }
 
   // --- Gate 8: worktree integrity.

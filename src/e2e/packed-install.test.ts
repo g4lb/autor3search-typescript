@@ -88,9 +88,24 @@ describe('the packed, installed artifact', () => {
     if (workDir !== undefined) await rm(workDir, { recursive: true, force: true })
   })
 
-  it('installs without npm warnings', () => {
+  it('installs without npm warnings about THIS package', () => {
     if (process.env['CI_SKIP_INSTALL'] === '1') return
-    expect(installOutput).not.toMatch(/npm warn/)
+    // Scoped, for the same reason the publish check below is scoped, and
+    // caught the same way -- by a CI leg this machine does not resemble.
+    // The npm that ships with Node 24 warns about dependencies carrying
+    // install scripts:
+    //
+    //   npm warn allow-scripts 1 package has install scripts not yet
+    //   covered by allowScripts: esbuild@0.28.2 (postinstall: node install.js)
+    //
+    // That is true, and worth knowing (esbuild arrives via tsx, and its
+    // postinstall can fetch a platform binary over HTTPS), but it is a fact
+    // about a dependency, not a defect in this package's manifest. Failing
+    // here on it would only teach us to stop reading the assertion.
+    const aboutThisPackage = installOutput
+      .split('\n')
+      .filter((l) => /npm warn/.test(l) && !/allow-scripts/.test(l))
+    expect(aboutThisPackage).toEqual([])
   })
 
   it('would publish without npm warning about the manifest', async () => {
@@ -105,7 +120,13 @@ describe('the packed, installed artifact', () => {
       cwd: repoRoot,
       timeoutMs: 600_000,
     })
-    expect(dry.exitCode).toBe(0)
+    // NOT asserting exitCode 0. npm 10 (Node 22) exits 0 for an
+    // unauthenticated dry run; the npm shipping with Node 24 exits 1. That
+    // is a fact about the caller's credentials, not about the manifest, and
+    // pinning it made this fail on every Node 24 leg. What must hold is
+    // that npm actually processed the manifest -- otherwise a dry run that
+    // died early would vacuously produce no warnings and pass.
+    expect(dry.stdout + dry.stderr).toMatch(/npm notice name: autor3search-typescript/)
 
     // Scoped to `npm warn publish`, which is the prefix npm uses for
     // MANIFEST corrections ('"bin[...]" script name was cleaned'). A bare

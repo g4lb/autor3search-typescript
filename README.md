@@ -127,7 +127,7 @@ npx autor3search-typescript stop -tag <tag> -clear   # cancel a pending stop
 |---|---|
 | `init` | Discover benchmarks and write `.autor3search/config.yaml` and `program.md` |
 | `doctor` | Report whether this machine can measure reliably (informational, always exits 0) |
-| `baseline` | Freeze tests/benchmarks, pin a worktree at HEAD, install and prove it can measure |
+| `baseline` | Freeze tests/benchmarks, pin two worktrees at HEAD, install and prove it can measure |
 | `eval` | Run one experiment through the gate chain and report a verdict (0 KEEP, 1 DISCARD, 2 FAIL, 3 CRASH) |
 | `status` | Report where a run is: branch, commits, worktree, experiment counts, in-flight eval, pending stop |
 | `stop` | Ask the agent to stop after its current experiment; `-clear` cancels, `-force` also signals the running eval |
@@ -140,6 +140,10 @@ Every command accepts a leading `-C <dir>` to run as if invoked from `<dir>` (it
 ### Where run state lives
 
 Everything the verdict depends on — the frozen manifest, the baseline record, the eval lock, stop requests — lives under the OS cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), keyed by the repository's own canonical path and the `-tag` you chose, never inside the repository itself. `results.tsv` and `run.log` also live in the repository but are gitignored and untracked — plain, human-readable output, not gated artifacts. `.autor3search/config.yaml` is the one exception: `init` writes `.autor3search/*` to `.gitignore` with a `!.autor3search/config.yaml` negation, so the run configuration itself is committed to version history (a KEEP has to stay reproducible and auditable later), while only its hash — not its content — is what the gate chain actually trusts; a hand-edit to it fails the next `eval` rather than silently loosening it.
+
+Two git worktrees live there too, both detached and both pinned by the harness: `baseline-worktree` holds the side every candidate is compared against, and `candidate-worktree` is checked out to the commit currently under evaluation. Each has its own installed `node_modules`, so one side's dependencies can never decide the other side's timings — which is the reason for the main cost of a run: dependencies are installed twice, once per worktree, when `baseline` runs. That is sound for the whole run because `package.json` and the lockfile are immutable while it lasts, so no commit the agent makes can invalidate either install.
+
+**Your own checkout is never written to.** `eval` restores the frozen test and benchmark files into the candidate worktree, not into your working tree, so a change the agent committed to a bench file stays visible on disk where you can review it while the frozen bytes are what actually get measured. Measuring a detached checkout rather than the live tree is also what makes the measurement and the commit it is credited to the same thing by construction: nothing can edit the measured directory midway through a timing round.
 
 ## Worked example
 

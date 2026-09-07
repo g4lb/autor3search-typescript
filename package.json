@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "bin": {
-    "autor3search-typescript": "./dist/cli/main.js"
+    "autor3search-typescript": "dist/cli/main.js"
   },
   "files": [
     "dist",

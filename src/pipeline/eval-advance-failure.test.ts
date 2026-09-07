@@ -88,10 +88,19 @@ describe('runEval: the post-KEEP advance fails (deferred item 2)', () => {
     const candidate = await headCommit(root)
 
     const worktreeDir = path.join(dir, 'baseline-worktree')
+    const candidateWorktreeDir = path.join(dir, 'candidate-worktree')
     const sidedMeasure = async (measureDir: string): Promise<number> =>
       measureDir === worktreeDir ? 1000 : 10
 
-    vi.mocked(repointWorktree).mockRejectedValue(new Error('boom'))
+    // Fail ONLY the advance's repoint of the BASELINE worktree. `eval` now
+    // also repoints the CANDIDATE worktree, in gate 3a, before any of this
+    // -- a blanket rejection crashes there instead and the post-KEEP path
+    // under test is never reached (which is exactly what happened: the run
+    // failed at worktree-integrity with measureCommit untouched).
+    vi.mocked(repointWorktree).mockImplementation(async (target: string) => {
+      if (target === candidateWorktreeDir) return
+      throw new Error('boom')
+    })
 
     const outcome = await runEval({ ctx, tag: TAG, description: 'advance blows up', measureOne: sidedMeasure })
 
@@ -99,7 +108,9 @@ describe('runEval: the post-KEEP advance fails (deferred item 2)', () => {
     // the measurement point, not a verdict about the change. FAIL would
     // read as "your change was rejected", which is a lie about the science.
     expect(outcome.verdict.status).toBe('crash')
-    expect(vi.mocked(repointWorktree)).toHaveBeenCalledTimes(1)
+    // Twice: gate 3a's candidate repoint (allowed through) and the
+    // advance's baseline repoint (rejected).
+    expect(vi.mocked(repointWorktree)).toHaveBeenCalledTimes(2)
 
     // CRASH here still writes a row -- the alternative is an exception
     // escaping with the experiment recorded nowhere at all.

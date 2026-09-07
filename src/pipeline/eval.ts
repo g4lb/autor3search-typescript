@@ -44,16 +44,17 @@ import type { Benchmark } from '../discover/benchmarks.js'
 import { freezableFiles } from '../discover/files.js'
 import { findUnmanifested, restore } from '../freeze/freeze.js'
 import { hashString } from '../freeze/manifest.js'
-import { changedFiles, headCommit, repointWorktree } from '../gitx/git.js'
+import { addWorktree, changedFiles, headCommit, repointWorktree } from '../gitx/git.js'
 import { interleave, type Observations } from '../measure/interleave.js'
 import { appendRow, loadRows, type Row } from '../results/results.js'
+import { detect } from '../pm/detect.js'
 import { checkScope } from '../scope/scope.js'
 import { ALPHA, compareAll, type Delta } from '../stats/delta.js'
 import { readBaseline, writeBaseline, type BaselineRecord } from '../state/baseline.js'
 import { acquireEvalLock } from '../state/lock.js'
 import { runDir } from '../state/home.js'
 import { readStop } from '../state/stop.js'
-import { FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
+import { CANDIDATE_WORKTREE_DIRNAME, FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
 import { ok, runShell, tail } from '../runner/exec.js'
 import { decide, type Verdict } from '../verdict/verdict.js'
 
@@ -213,6 +214,7 @@ async function runCommandGate(o: {
 async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   const log = opts.log ?? ((): void => {})
   const worktreeDir = path.join(dir, WORKTREE_DIRNAME)
+  const candidateWorktreeDir = path.join(dir, CANDIDATE_WORKTREE_DIRNAME)
   const frozenDir = path.join(dir, FROZEN_DIRNAME)
 
   const stopRequested = (await readStop(dir)) !== null
@@ -342,14 +344,14 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
     )
   }
 
-  // Captured HERE, before gate 3 ever touches the working tree: gate 3's own
-  // restore intentionally leaves tracked frozen files differing from HEAD
-  // (that is the whole point -- the measured content must be the frozen
-  // bytes, not whatever the agent committed), which makes the tree dirty on
-  // its own. Checking cleanliness after that would misreport every
-  // legitimate restore as an uncommitted-change violation. What gate 8 must
-  // police is whether the AGENT's own commit left the tree clean, which is
-  // exactly what this snapshot -- taken before any harness mutation -- answers.
+  // Gate 3 no longer writes into the user's working tree -- the restore
+  // lands in the candidate worktree -- so this no longer has to be captured
+  // before it to avoid misreading a legitimate restore as an uncommitted
+  // change. It is still taken here, and still matters, for a different
+  // reason: uncommitted work is NOT what gets measured any more (the
+  // candidate worktree is a checkout of the commit), so an agent that
+  // forgot to commit would otherwise have its edit silently ignored rather
+  // than evaluated. Telling it so is the point.
   //
   // Deliberately `changedFiles(repoRoot, candidateCommit)` (HEAD), NOT
   // `isClean` (`git status --porcelain`): `isClean` respects whatever
@@ -364,11 +366,65 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // `changedFiles` is already immune to this (see its own doc comment) --
   // reusing it here means gate 8 inherits that immunity by construction,
   // not by remembering to reimplement it a second time.
-  let treeWasCleanBeforeRestore = true
+  let treeWasClean = true
   try {
-    treeWasCleanBeforeRestore = (await changedFiles(opts.ctx.repoRoot, candidateCommit)).length === 0
+    treeWasClean = (await changedFiles(opts.ctx.repoRoot, candidateCommit)).length === 0
   } catch (e) {
     return finish(noVerdict('crash'), [], 'worktree-integrity', `could not check working tree cleanliness: ${messageOf(e)}`)
+  }
+
+  // Hoisted above gate 3a, which may have to run an install of its own.
+  const timeoutMs = parseDuration(config.timeout)
+
+  // --- Gate 3a: prepare the candidate worktree.
+  //
+  // The candidate is measured in its own detached checkout of
+  // `candidateCommit`, not in the user's working tree. Both sides are then
+  // the same kind of thing: a worktree pinned to a commit, with frozen
+  // files restored over it. What that buys, concretely --
+  //
+  //   * the measurement can no longer disagree with the commit it is
+  //     credited to, because there is no window in which the measured
+  //     directory can change under us;
+  //   * `eval` stops writing into the checkout the human and the agent are
+  //     both using -- the frozen-file restore lands here instead;
+  //   * the agent may keep editing while a measurement runs.
+  //
+  // A baseline created before this existed has no candidate worktree.
+  // Rather than demand `baseline -force` -- which re-derives the freeze
+  // manifest from whatever is at HEAD by then, silently adopting the
+  // agent's own commits as the correctness contract -- it is created here,
+  // once, and the run continues.
+  try {
+    if (!(await exists(candidateWorktreeDir))) {
+      await addWorktree(opts.ctx.repoRoot, candidateWorktreeDir, candidateCommit)
+      const detected = await detect(opts.ctx.repoRoot)
+      const install = await runShell(detected.installCommand, {
+        cwd: candidateWorktreeDir,
+        timeoutMs,
+        log,
+      })
+      if (!ok(install)) {
+        throw new Error(
+          `installing dependencies in the candidate worktree failed ` +
+            `(${detected.installCommand}, exit ${install.exitCode}): ` +
+            `${tail(install.stderr || install.stdout, 40)}`,
+        )
+      }
+      warnings.push(
+        'created the candidate worktree for a baseline that predates it; ' +
+          'no re-baseline was needed',
+      )
+    } else {
+      await repointWorktree(candidateWorktreeDir, candidateCommit)
+    }
+  } catch (e) {
+    return finish(
+      noVerdict('crash'),
+      [],
+      'worktree-integrity',
+      `could not prepare the candidate worktree: ${messageOf(e)}`,
+    )
   }
 
   // --- Gate 3: restore. Frozen files are put back exactly as they were,
@@ -377,7 +433,7 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // here (e.g. the frozen snapshot itself is missing or unreadable) is a
   // harness-state problem, not something the agent's change did -- CRASH.
   try {
-    const changedByRestore = await restore(opts.ctx.repoRoot, frozenDir, baseline.manifest)
+    const changedByRestore = await restore(candidateWorktreeDir, frozenDir, baseline.manifest)
     restoredFiles.push(...changedByRestore)
     if (changedByRestore.length > 0) {
       warnings.push(
@@ -408,7 +464,6 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
     )
   }
 
-  const timeoutMs = parseDuration(config.timeout)
 
   // --- Gates 5, 6, 7: typecheck, build, test. Order is load-bearing: a
   // change that does not compile should be reported as a typecheck failure,
@@ -423,7 +478,7 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
     required: boolean
   }[]
   for (const gate of commandGates) {
-    const failure = await runCommandGate({ ...gate, cwd: opts.ctx.repoRoot, timeoutMs, log })
+    const failure = await runCommandGate({ ...gate, cwd: candidateWorktreeDir, timeoutMs, log })
     if (failure !== null) return finish(noVerdict('fail'), [], failure.gate, failure.message)
   }
 
@@ -437,7 +492,7 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
   // same uncommitted edit can be measured and credited indefinitely. Both
   // checks below are FAIL, not CRASH: they describe the agent's own change
   // (or lack of one), not a harness malfunction.
-  if (!treeWasCleanBeforeRestore) {
+  if (!treeWasClean) {
     return finish(
       noVerdict('fail'),
       [],
@@ -494,7 +549,7 @@ async function evaluate(opts: EvalOptions, dir: string): Promise<EvalOutcome> {
       rounds: config.count,
       benchmarks,
       baseDir: worktreeDir,
-      candDir: opts.ctx.repoRoot,
+      candDir: candidateWorktreeDir,
       measureOne,
     }))
   } catch (e) {

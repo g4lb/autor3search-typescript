@@ -24,6 +24,16 @@ function ctxFor(root: string): RunCtx {
   }
 }
 
+async function exists(p: string): Promise<boolean> {
+  try {
+    const { access } = await import('node:fs/promises')
+    await access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function git(cwd: string, args: string[]): Promise<void> {
   const r = await run('git', args, { cwd, timeoutMs: 60_000 })
   if (!ok(r)) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
@@ -841,6 +851,100 @@ describe('runEval: end to end against the real demo fixture', () => {
 // The fix writes `measureCommit` FIRST, so a worktree merely left behind
 // (at the OLD commit, while the baseline record already names the NEW one)
 // is a recoverable, well-defined state: gate 8 repairs it itself.
+describe('runEval: the candidate is measured in its own worktree', () => {
+  // The property the whole change exists for. `eval` used to measure
+  // `ctx.repoRoot` -- the checkout the human and the agent are both editing
+  // -- while the baseline side measured an isolated worktree.
+  it('restores frozen files into the candidate worktree, never into the user\'s checkout', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+
+    // The agent commits a weakened benchmark: legal to write, not legal to
+    // keep. Restoring it is what stops a weakened test manufacturing a KEEP.
+    const benchRel = 'src/wordcount.bench.ts'
+    const benchPath = path.join(root, benchRel)
+    const original = await readFile(benchPath, 'utf8')
+    const tampered = `${original}\n// the agent's edit\n`
+    await writeFile(benchPath, tampered, 'utf8')
+    await git(root, ['add', benchRel])
+    await git(root, ['commit', '-q', '-m', 'weaken the benchmark'])
+
+    const outcome = await runEval({ ctx, tag: TAG, description: 'tampered bench', measureOne: constMeasureOne })
+    expect(outcome.failedGate).toBeUndefined()
+
+    // The user's own working tree still holds exactly what the agent
+    // committed. Before this change, gate 3 rewrote this file underneath
+    // them on every single eval.
+    expect(await readFile(benchPath, 'utf8')).toBe(tampered)
+
+    // ...and the frozen bytes are what the candidate side actually measured.
+    const inWorktree = await readFile(path.join(dir, 'candidate-worktree', benchRel), 'utf8')
+    expect(inWorktree).toBe(original)
+    expect(inWorktree).not.toBe(tampered)
+  }, 300_000)
+
+  // The claim at the centre of the change, and the one the other tests in
+  // this block do NOT pin: restoring and repointing the candidate worktree
+  // is worthless if the measurement still reads somewhere else. Verified by
+  // mutation -- putting `candDir: ctx.repoRoot` back left every other test
+  // here green.
+  it('measures the two worktrees, and never the user\'s checkout', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    await trivialCommit(root)
+
+    const measured = new Set<string>()
+    await runEval({
+      ctx,
+      tag: TAG,
+      description: '',
+      measureOne: async (measureDir: string): Promise<number> => {
+        measured.add(measureDir)
+        return 1
+      },
+    })
+
+    expect([...measured].sort()).toEqual(
+      [path.join(dir, 'baseline-worktree'), path.join(dir, 'candidate-worktree')].sort(),
+    )
+    expect(measured.has(root)).toBe(false)
+  }, 300_000)
+
+  it('pins the candidate worktree to the commit under evaluation', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    await trivialCommit(root)
+    const candidateCommit = await headCommit(root)
+
+    await runEval({ ctx, tag: TAG, description: '', measureOne: constMeasureOne })
+
+    // What was measured and what gets credited are now the same commit by
+    // construction, rather than by a cleanliness check racing the clock.
+    expect(await headCommit(path.join(dir, 'candidate-worktree'))).toBe(candidateCommit)
+  }, 300_000)
+
+  it('creates the candidate worktree for a baseline that predates it, without a re-baseline', async () => {
+    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const dir = runDir(root, TAG)
+    await trivialCommit(root)
+
+    // Simulate an older baseline: remove the candidate worktree entirely.
+    const candidate = path.join(dir, 'candidate-worktree')
+    await run('git', ['worktree', 'remove', '--force', candidate], { cwd: root, timeoutMs: 60_000 })
+    expect(await exists(candidate)).toBe(false)
+
+    const outcome = await runEval({ ctx, tag: TAG, description: '', measureOne: constMeasureOne })
+
+    // Recreated in place. The alternative -- telling the user to run
+    // `baseline -force` -- would re-derive the freeze manifest from
+    // whatever is at HEAD by then, adopting the agent's own commits as the
+    // correctness contract.
+    expect(outcome.failedGate).toBeUndefined()
+    expect(await exists(candidate)).toBe(true)
+    expect(outcome.warnings.join(' ')).toMatch(/predates it|no re-baseline/)
+  }, 300_000)
+})
+
 describe('runEval: worktree self-heal (I6)', () => {
   it('gate 8 repoints and restores a worktree left behind by an interrupted advance, instead of demanding -force', async () => {
     const { root, ctx } = await setup(FAST_MEASURE_PATCHES)

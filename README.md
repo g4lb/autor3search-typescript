@@ -1,5 +1,8 @@
 # autor3search-typescript
 
+[![npm](https://img.shields.io/npm/v/autor3search-typescript?label=npm)](https://www.npmjs.com/package/autor3search-typescript)
+[![ci](https://github.com/g4lb/autor3search-typescript/actions/workflows/ci.yml/badge.svg)](https://github.com/g4lb/autor3search-typescript/actions/workflows/ci.yml)
+
 Let an AI coding agent loose on your repository's performance, without letting it grade its own homework. `autor3search-typescript` freezes your tests and benchmarks, measures every change the agent proposes against a baseline it cannot touch, and only keeps a commit that is a real, statistically significant, material win.
 
 Licensed under the [MIT License](./LICENSE). Copyright (c) 2026 Gal Be.

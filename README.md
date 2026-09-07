@@ -63,17 +63,13 @@ Two things worth knowing before you start it:
   Limitations below for how much run-to-run noise a JS runtime can add even on an
   idle machine.
 
-## What you get back
+## The idea
 
-An unattended loop that, commit by commit:
+You do not edit TypeScript to tune performance. You edit `program.md` — the
+instructions that drive your agent. The agent edits the TypeScript. The harness
+holds the metric, and the agent cannot reach it.
 
-- measures the agent's candidate against a frozen baseline with real, repeated, interleaved timing rounds and a rank-sum significance test — not a single before/after number;
-- restores any test, spec or benchmark file the agent edited before running it, so a weakened test can never manufacture a KEEP;
-- refuses (FAILs) a change that touches `package.json`, a lockfile, `tsconfig.json`, or a file outside the declared `scope`, before anything is even measured;
-- refuses a change that adds a new test/bench file the baseline never saw, closing "add an easier benchmark";
-- appends one row per experiment to `results.tsv`, and reports a cumulative, compounding speedup across the whole run.
-
-## Who owns what
+### Who owns what
 
 | | you edit | the agent edits |
 |---|---|---|
@@ -86,6 +82,16 @@ An unattended loop that, commit by commit:
 | baselines, locks, stop requests | never — this is what the agent cannot reach | never |
 
 The measurement state — baselines, locks, stop requests — lives outside the repository entirely (see "Where run state lives" below). If the agent could write any of it, it could grade its own work.
+
+### What you get back
+
+An unattended loop that, commit by commit:
+
+- measures the agent's candidate against a frozen baseline with real, repeated, interleaved timing rounds and a rank-sum significance test — not a single before/after number;
+- restores any test, spec or benchmark file the agent edited before running it, so a weakened test can never manufacture a KEEP;
+- refuses (FAILs) a change that touches `package.json`, a lockfile, `tsconfig.json`, or a file outside the declared `scope`, before anything is even measured;
+- refuses a change that adds a new test/bench file the baseline never saw, closing "add an easier benchmark";
+- appends one row per experiment to `results.tsv`, and reports a cumulative, compounding speedup across the whole run.
 
 ## Quick start
 
@@ -104,7 +110,7 @@ To install from `main` ahead of a release instead of the last published version,
 `npm install --save-dev g4lb/autor3search-typescript` — the GitHub form works too,
 just builds the tool on the way in instead of using a prebuilt tarball.
 
-## Watching and stopping a run
+## Watching a run, and stopping it
 
 ```bash
 npx autor3search-typescript status -tag <tag>   # branch, commits, worktree, experiment counts, in-flight eval — read-only
@@ -127,14 +133,15 @@ npx autor3search-typescript stop -tag <tag> -clear   # cancel a pending stop
 | `stop` | Ask the agent to stop after its current experiment; `-clear` cancels, `-force` also signals the running eval |
 | `report` | Summarize `results.tsv`: counts by status, cumulative speedup, largest individual wins |
 | `profile` | Run the declared benchmarks under Node's CPU profiler and print the hottest functions |
+| `version` | Print which build of the harness this is, and the Node runtime measuring with it |
 
 Every command accepts a leading `-C <dir>` to run as if invoked from `<dir>` (its git repository root is resolved from there).
 
-## Where run state lives
+### Where run state lives
 
 Everything the verdict depends on — the frozen manifest, the baseline record, the eval lock, stop requests — lives under the OS cache directory (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), keyed by the repository's own canonical path and the `-tag` you chose, never inside the repository itself. `results.tsv` and `run.log` also live in the repository but are gitignored and untracked — plain, human-readable output, not gated artifacts. `.autor3search/config.yaml` is the one exception: `init` writes `.autor3search/*` to `.gitignore` with a `!.autor3search/config.yaml` negation, so the run configuration itself is committed to version history (a KEEP has to stay reproducible and auditable later), while only its hash — not its content — is what the gate chain actually trusts; a hand-edit to it fails the next `eval` rather than silently loosening it.
 
-## The worked example
+## Worked example
 
 This is one real, unmodified run of this tool against the demo fixture shipped in `testdata/demo/`: a `countWords` function whose hot loop rebuilds a whole new array on every character —
 
@@ -189,7 +196,18 @@ Each declared benchmark is measured `count` times per side (baseline and candida
 
 `count` below 4 is refused outright at config-load time: with fewer than 4 rounds per side, the exact rank-sum test cannot report `p < 0.05` no matter how large the true effect is, so every experiment would DISCARD regardless of what changed. The shipped default is 10.
 
-## Limitations — read this before trusting an overnight run
+### When the measurement cannot carry the verdict
+
+`eval` prints `WARNING:` lines above its verdict (and a `warnings` array in `--json`) when the statistics behind a result do not support reading it at face value. They never change the decision. Two matter:
+
+- **Too few rounds for a confidence interval.** At 95% confidence the median's interval needs at least 6 observations per side; below that it is unbounded.
+- **No KEEP was reachable.** The Mann-Whitney U test has a floor on the p-value it can produce for a given sample size — with `n` rounds per side the smallest attainable two-sided p is `2/C(2n,n)`, however far apart the two samples are. Rule 1 divides `ALPHA` by the number of benchmarks, so enough benchmarks push the corrected threshold below that floor and *every* experiment discards no matter what the agent does. The `count >= 4` floor cannot catch this: it does not know how many benchmarks a run will compare. The warning names the count to raise to, or says to compare fewer benchmarks when no count would clear it.
+
+`base_ns` is **not** fixed for the whole run. `baseline` pins two things that are kept deliberately separate: a FROZEN commit that the frozen tests and the scope gate always compare against (so an agent cannot expand what it may edit by banking experiments), and a MEASUREMENT commit — what `base_ns` is actually measured against — that starts equal to the frozen one and **advances to the candidate's own commit after every KEEP**. So `score` always answers "did *this* experiment help, compared to the last thing that was kept," never "is the tree better than when the run started." Without this, once one real improvement was kept, every later experiment — however useless — would keep comparing against that same stale starting point, and a no-op could coast to a KEEP on an earlier win it did not contribute to.
+
+One consequence: each kept `score` is only that experiment's own incremental contribution, so `report`'s cumulative speedup is the **product** of every kept score, not the latest one alone — successive real improvements compound the way percentage changes do.
+
+## Limitations
 
 **A KEEP is evidence, not proof.** Any fixed statistical threshold admits false positives; a KEEP means "this cleared the bar the config set," not "this change is definitely faster in production."
 
@@ -208,3 +226,26 @@ Each declared benchmark is measured `count` times per side (baseline and candida
 **`count` below 4 can never reach significance,** for the reason given under Scoring above, which is why it is refused at config-load time rather than silently producing a run that can only ever DISCARD.
 
 A performance tool that oversells its own certainty is worse than useless: it launders noise into a verdict a human then trusts. Every claim above is stated as plainly as it can be for exactly that reason.
+
+### Repos with no benchmarks
+
+`init` discovers benchmarks by scanning the repository for `*.bench.ts` files and looking for exported functions named `bench*`. If it finds none, it refuses to write `.autor3search/config.yaml` and exits with an error, rather than generating a config with an empty `benchmarks:` list that would silently optimize nothing.
+
+That refusal is deliberate: this tool has no other notion of "faster." The verdict — KEEP, DISCARD, FAIL, CRASH — is entirely a function of the declared benchmarks' timings across a baseline and a candidate. No benchmarks means no signal to gate on, at which point every candidate would either be rejected for no reason or accepted for no reason.
+
+To use `autor3search-typescript` on a repository like this:
+
+1. Write at least one benchmark covering the code you actually want made faster — a plain exported function in a `*.bench.ts` file:
+
+   ```ts
+   export function benchThing(): void {
+     thing()
+   }
+   ```
+
+2. Benchmark the right thing. A benchmark that exercises a cold path, a trivial helper, or a function nobody calls under load produces numbers that are entirely real and entirely useless — confident percentages attached to work that was never the bottleneck. Benchmark the function, loop, or request path that actually dominates the workload you care about, ideally informed by `profile` or a profile of the real program rather than a guess.
+3. Re-run `init` once the benchmark exists. It will pick it up and proceed normally.
+
+## License
+
+MIT © 2026 Gal Be

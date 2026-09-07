@@ -9,6 +9,7 @@ import { cmdProfile } from './cmd-profile.js'
 import { cmdReport } from './cmd-report.js'
 import { cmdStatus } from './cmd-status.js'
 import { cmdStop } from './cmd-stop.js'
+import { cmdVersion } from './cmd-version.js'
 import { resolveCtx, splitDashC, type RunCtx } from './runctx.js'
 
 type Command = (ctx: RunCtx, argv: string[]) => Promise<number>
@@ -34,6 +35,7 @@ export const COMMANDS: Record<string, Command> = {
   stop: cmdStop,
   report: cmdReport,
   profile: cmdProfile,
+  version: cmdVersion,
 }
 
 const HELP = `autor3search-typescript -- autonomous performance optimization for a TypeScript repository
@@ -49,11 +51,25 @@ Commands:
   stop      Ask the agent to stop after its current experiment; -clear cancels, -force also signals the running eval
   report    Summarize results.tsv: counts by status, cumulative speedup, largest individual wins
   profile   Run the declared benchmarks under Node's CPU profiler and print the hottest functions
+  version   Print which build of the harness this is, and the Node runtime measuring with it
 
 Global flags:
   -C <dir>  Run as if invoked from <dir> (resolves that directory's git repository root)
   --help    Print this message
 `
+
+/**
+ * Stand-in context for the one command that must run outside a repository.
+ * Every field is a path `version` never touches; it exists only so the
+ * shared `(ctx, argv)` command signature holds without a `RunCtx | null`
+ * that all eight other commands would then have to narrow.
+ */
+const NO_REPO_CTX: RunCtx = {
+  repoRoot: '',
+  configPath: '',
+  resultsPath: '',
+  logPath: '',
+}
 
 function printHelp(): void {
   process.stdout.write(HELP)
@@ -90,6 +106,15 @@ export async function main(argv: string[]): Promise<number> {
       process.stderr.write(`error: unknown command "${name}"\n\n`)
       printHelp()
       return 2
+    }
+
+    // `version` reports the harness's own identity, which has nothing to do
+    // with any repository -- and "which version is installed?" is asked most
+    // often from outside one. Resolving a RunCtx first would make it fail
+    // with "not inside a git repository", so it dispatches without one, the
+    // way `--help` does. Every other command genuinely needs the repo.
+    if (name === 'version') {
+      return await command(NO_REPO_CTX, commandArgv)
     }
 
     const ctx = await resolveCtx(argv)

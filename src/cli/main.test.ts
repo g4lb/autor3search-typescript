@@ -314,8 +314,50 @@ describe('main', () => {
     expect(stdout.join('')).toMatch(/profile/)
   })
 
-  it('exposes exactly eight commands', () => {
-    expect(Object.keys(COMMANDS)).toHaveLength(8)
+  it('exposes exactly nine commands', () => {
+    expect(Object.keys(COMMANDS)).toHaveLength(9)
+  })
+
+  // Ruling 34 again: `version` shipped as an exported constant with a
+  // passing unit test and no way to reach it from the CLI at all -- the
+  // same "implemented, tested, unreachable" defect that made this a
+  // standing constraint. Dispatch through `main`, not through cmdVersion.
+  it('dispatches "version" through main -- registered, not merely implemented', async () => {
+    captureOutput()
+
+    const code = await main(['version'])
+
+    expect(code).toBe(0)
+    expect(stdout.join('')).toMatch(/^autor3search-typescript \d+\.\d+\.\d+\n/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  // The unit tests above run with the repo as cwd, so they pass whether or
+  // not `version` needs a repository -- and it DID need one: `main`
+  // resolved a RunCtx before dispatching, so a packed install answered
+  // `version` with "not inside a git repository" and exit 2. Asking which
+  // version is installed is asked most often from outside a repo, so this
+  // runs from a bare temp directory, which is the only place that failure
+  // is visible.
+  it('reports a version from outside any git repository', async () => {
+    const outside = await mkdtemp(path.join(tmpdir(), 'ars-norepo-'))
+    captureOutput()
+
+    const code = await main(['-C', outside, 'version'])
+
+    expect(code).toBe(0)
+    expect(stdout.join('')).toMatch(/^autor3search-typescript \d+\.\d+\.\d+\n/)
+    expect(stderr.join('')).toBe('')
+  })
+
+  it('rejects arguments to "version" rather than reporting a version anyway', async () => {
+    captureOutput()
+
+    const code = await main(['version', '--jsonn'])
+
+    expect(code).toBe(2)
+    expect(stdout.join('')).toBe('')
+    expect(stderr.join('')).toMatch(/takes no arguments/)
   })
 
   // Ruling 34, extended: the mutation evidence for the doctor reachability

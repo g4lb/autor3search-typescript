@@ -4,19 +4,66 @@ Let an AI coding agent loose on your repository's performance, without letting i
 
 Licensed under the [MIT License](./LICENSE). Copyright (c) 2026 Gal Be.
 
-## Hand this to your agent
+## Start here
 
-Once you've run `init` and `baseline` (see Quick start below), this is the entire brief — paste it into your coding agent's context and let it run:
+Open your coding agent inside the TypeScript repository you want to make faster, and
+paste this:
 
+```text
+Install and run autor3search-typescript on this repository, then optimize it.
+
+Setup:
+1. npm install --save-dev g4lb/autor3search-typescript
+   (not yet on npm — this installs from source; requires git, and takes longer
+   than an ordinary npm install because it builds the tool on the way in)
+2. npx autor3search-typescript init
+   Show me the benchmarks it discovered. If it reports none, STOP and tell me:
+   this tool can only optimize what it can measure.
+3. git add -A && git commit -m "autor3search-typescript init"
+4. npx autor3search-typescript doctor
+   Show me any warnings. If the machine looks unfit to measure, stop and ask me
+   before continuing.
+5. npx autor3search-typescript baseline -tag <today, e.g. sep7>
+
+Then:
+6. Read program.md in this repository, in full. It is your instruction set for
+   the rest of this run. Follow it exactly.
+
+Rules for the whole run:
+- One hypothesis per commit. Commit before each experiment, then run
+  `npx autor3search-typescript eval --json` and apply its verdict before touching
+  anything else: KEEP means the commit stays; anything else (DISCARD, FAIL, CRASH)
+  means `git reset --hard HEAD~1`.
+- Never edit program.md, .autor3search/config.yaml, results.tsv, any
+  *.test.*/*.spec.*/*.bench.* file, package.json, a lockfile, or tsconfig.json.
+  They are not yours.
+- Never pass -force to any autor3search-typescript command. (I may run
+  `autor3search-typescript stop -force` myself; that one is mine, not yours.)
+- Print one context line before each experiment, so I can see where you are:
+  [exp <n> | <branch> | vs <measure_commit> | stop: npx autor3search-typescript stop]
+
+Run the loop until I stop you. I stop you by running
+`npx autor3search-typescript stop` in my own terminal — you will see it as
+"stop_requested": true in a verdict. When you do: apply that verdict, do not
+start another experiment, run `npx autor3search-typescript report`, summarize
+what you tried, and exit the loop.
 ```
-Read program.md in this repository's root. It is your complete instruction set for an
-autonomous performance-optimization run. Follow it exactly: one hypothesis per commit,
-run `autor3search-typescript eval --json` after each one, and apply its verdict before
-touching anything else. Keep looping until a verdict reports "stop_requested": true,
-then run `autor3search-typescript report` and summarize what happened.
-```
 
-`program.md` is generated for your repository by `init` — it names the benchmarks in scope, spells out the KEEP/DISCARD/FAIL/CRASH contract, lists everything the agent must never touch, and ends with a bank of generic V8/TypeScript performance ideas for when the agent is out of hypotheses. You should read and edit it before handing it over; it is the only file in this system meant for both a human and an agent to read.
+That's the whole handoff. The agent installs the tool, discovers your benchmarks,
+freezes a baseline, and then follows `program.md` — generated for your repository by
+`init` — which tells it how to run the keep-or-discard loop. `program.md` names the
+benchmarks in scope, spells out the KEEP/DISCARD/FAIL/CRASH contract, lists everything
+the agent must never touch, and ends with a bank of generic V8/TypeScript performance
+ideas for when the agent is out of hypotheses.
+
+Two things worth knowing before you start it:
+
+- **It needs benchmarks.** `init` refuses to run without a discovered `bench*`
+  function in a `*.bench.ts` file — the tool optimizes what it can measure, and
+  refuses to guess.
+- **Numbers are only as good as the machine.** Run `doctor` and read it. See
+  Limitations below for how much run-to-run noise a JS runtime can add even on an
+  idle machine.
 
 ## What you get back
 
@@ -45,7 +92,7 @@ The measurement state — baselines, locks, stop requests — lives outside the 
 ## Quick start
 
 ```bash
-npm install --save-dev autor3search-typescript
+npm install --save-dev g4lb/autor3search-typescript   # not yet on npm — this installs from source
 npx autor3search-typescript init
 # review .autor3search/config.yaml and program.md, then:
 git add .autor3search/config.yaml program.md .gitignore && git commit -m "chore: add autor3search-typescript"
@@ -54,6 +101,8 @@ npx autor3search-typescript baseline -tag <tag>
 ```
 
 `init` refuses to run if it finds no exported `bench*` function in a `*.bench.ts` file, or no `test` script in `package.json` — this tool has nothing to gate or measure without both.
+
+Once this is published, the first line becomes `npm install --save-dev autor3search-typescript`; everything else is unchanged.
 
 ## Watching and stopping a run
 

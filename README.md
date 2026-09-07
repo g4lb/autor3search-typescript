@@ -13,9 +13,7 @@ paste this:
 Install and run autor3search-typescript on this repository, then optimize it.
 
 Setup:
-1. npm install --save-dev g4lb/autor3search-typescript
-   (not yet on npm — this installs from source; requires git, and takes longer
-   than an ordinary npm install because it builds the tool on the way in)
+1. npm install --save-dev autor3search-typescript
 2. npx autor3search-typescript init
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
    this tool can only optimize what it can measure.
@@ -92,7 +90,7 @@ The measurement state — baselines, locks, stop requests — lives outside the 
 ## Quick start
 
 ```bash
-npm install --save-dev g4lb/autor3search-typescript   # not yet on npm — this installs from source
+npm install --save-dev autor3search-typescript
 npx autor3search-typescript init
 # review .autor3search/config.yaml and program.md, then:
 git add .autor3search/config.yaml program.md .gitignore && git commit -m "chore: add autor3search-typescript"
@@ -102,7 +100,9 @@ npx autor3search-typescript baseline -tag <tag>
 
 `init` refuses to run if it finds no exported `bench*` function in a `*.bench.ts` file, or no `test` script in `package.json` — this tool has nothing to gate or measure without both.
 
-Once this is published, the first line becomes `npm install --save-dev autor3search-typescript`; everything else is unchanged.
+To install from `main` ahead of a release instead of the last published version, use
+`npm install --save-dev g4lb/autor3search-typescript` — the GitHub form works too,
+just builds the tool on the way in instead of using a prebuilt tarball.
 
 ## Watching and stopping a run
 

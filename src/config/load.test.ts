@@ -82,6 +82,21 @@ describe('parseConfig', () => {
     expect(() => parseConfig('scope: "src/**"\n')).toThrow(/scope must be an array of strings/)
   })
 
+  // Deferred item 8: the message used to be "must be an array of strings,
+  // got an array", which names the one thing the author already got right
+  // and leaves them hunting the bad entry by eye in a long scope list.
+  it('names the offending element when an array holds a non-string', () => {
+    expect(() => parseConfig('scope: ["src/**", 3, "lib/**"]\n')).toThrow(
+      /scope must be an array of strings, but item 1 is a number/,
+    )
+  })
+
+  it('names a nested array element by its own type, not the container\'s', () => {
+    expect(() => parseConfig('scope: ["a", ["b"]]\n')).toThrow(
+      /scope must be an array of strings, but item 1 is an array/,
+    )
+  })
+
   it('rejects a non-string test_command rather than crashing on it later', () => {
     expect(() => parseConfig('scope: ["src/**"]\ntest_command: 123\n')).toThrow(
       /test_command must be a string/,

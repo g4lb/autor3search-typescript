@@ -18,11 +18,21 @@ export function matchGlob(pattern: string, p: string): boolean {
     const c = pattern[i]!
     if (c === '*') {
       if (pattern[i + 1] === '*') {
-        // `**/` also matches zero directories, so `src/**` matches `src/a.ts`.
         if (pattern[i + 2] === '/') {
+          // `**/` in the MIDDLE of a pattern. `(?:.*/)?` makes the whole
+          // group optional so it also matches ZERO directories: `src/**/a.ts`
+          // matches `src/a.ts` as well as `src/x/y/a.ts`.
           re += '(?:.*/)?'
           i += 2
         } else {
+          // `**` NOT followed by `/` -- trailing (`src/**`) or bare (`**`).
+          // `.*` crosses separators, so `src/**` matches `src/a.ts` and
+          // `src/x/y/a.ts` alike. Note this branch also absorbs a `**`
+          // written mid-pattern without a slash after it (`src/**x`), which
+          // degrades to "anything, including separators, then x" rather than
+          // being rejected -- deliberately permissive, since the gate's job
+          // is to be conservative about what it ADMITS, and a widened
+          // pattern here is one the config author wrote explicitly.
           re += '.*'
           i += 1
         }

@@ -4,11 +4,11 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONFIG_PATH } from '../config/schema.js'
 import { RESULTS_PATH } from '../results/results.js'
-import { hashString } from '../freeze/manifest.js'
 import { branchExists, currentBranch, headCommit, isClean } from '../gitx/git.js'
 import { ok, run } from '../runner/exec.js'
 import { readBaseline } from '../state/baseline.js'
 import { runDir, STATE_HOME_ENV } from '../state/home.js'
+import { hashString } from '../freeze/manifest.js'
 import { makeDemoRepo } from '../testutil/demo.js'
 import { cmdBaseline } from './cmd-baseline.js'
 import { cmdInit } from './cmd-init.js'
@@ -261,8 +261,22 @@ describe('cmdBaseline', () => {
     const rec = await readBaseline(dir)
     expect(Object.keys(rec.manifest.files)).toContain('src/wordcount.test.ts')
     expect(Object.keys(rec.manifest.files)).toContain('src/wordcount.bench.ts')
-    // The actual bytes were copied into the frozen snapshot, not just listed.
-    expect(await exists(path.join(dir, 'frozen', 'src', 'wordcount.bench.ts'))).toBe(true)
+    // The actual bytes were copied into the frozen snapshot, not just
+    // listed. Deferred item 9: this used to assert only that the file
+    // EXISTS, which an empty file or a stale copy from a previous run would
+    // also satisfy -- while the comment claimed the bytes were checked. A
+    // restore that writes the wrong content is exactly the failure the
+    // freeze exists to prevent, so compare them.
+    const benchRel = 'src/wordcount.bench.ts'
+    const source = await readFile(path.join(root, benchRel), 'utf8')
+    const frozen = await readFile(path.join(dir, 'frozen', benchRel), 'utf8')
+    expect(frozen).toBe(source)
+    expect(source).not.toBe('') // the comparison above is vacuous on two empty files
+
+    // And the manifest's recorded hash is the hash of those same bytes --
+    // gate 3 trusts the hash, not the snapshot, so a manifest that agreed
+    // with nothing on disk would pass every check above.
+    expect(rec.manifest.files[benchRel]).toBe(hashString(source))
   })
 
   // Priority 3 from the final whole-branch review: a file the config

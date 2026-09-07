@@ -76,10 +76,19 @@ function requireNumber(v: unknown, yamlKey: string): number {
 }
 
 function requireStringArray(v: unknown, yamlKey: string): string[] {
-  if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) {
+  if (!Array.isArray(v)) {
     throw new Error(`${yamlKey} must be an array of strings, got ${describeType(v)}`)
   }
-  return v
+  // Deferred item 8: reporting `describeType(v)` for an array with a bad
+  // element said "must be an array of strings, got an array", which names
+  // the one thing the author already got right. Point at the element.
+  const badIndex = v.findIndex((x) => typeof x !== 'string')
+  if (badIndex !== -1) {
+    throw new Error(
+      `${yamlKey} must be an array of strings, but item ${badIndex} is ${describeType(v[badIndex])}`,
+    )
+  }
+  return v as string[]
 }
 
 /** Parses a duration field, prefixing the error with the offending yaml key. */

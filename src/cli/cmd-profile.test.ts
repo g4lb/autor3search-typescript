@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises'
+import { access, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CONFIG_PATH } from '../config/schema.js'
@@ -126,6 +126,47 @@ describe('cmdProfile', () => {
     expect(code).toBe(0)
     expect(stdout.join('')).toMatch(/DevTools|speedscope/i)
   }, 30_000)
+
+  // Deferred item 13: the per-benchmark try/catch has no early return, so a
+  // failing benchmark must not stop the ones after it -- confirmed by code
+  // inspection only, which is exactly the control-flow detail a refactor
+  // breaks silently. The demo fixture ships one benchmark, so this adds a
+  // second, named to sort FIRST so the surviving one is genuinely profiled
+  // after a failure rather than before it.
+  it('keeps profiling the remaining benchmarks after one fails, and exits non-zero', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    await writeFile(
+      path.join(root, 'src', 'aaa-broken.bench.ts'),
+      'export function benchBroken(): void {\n  throw new Error("this benchmark is broken")\n}\n',
+      'utf8',
+    )
+    const initOut = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    expect(await cmdInit(ctx, [])).toBe(0)
+    initOut.mockRestore()
+
+    captureOutput()
+    const code = await cmdProfile(ctx, ['-benchtime', '20ms'])
+
+    const out = stdout.join('')
+    const err = stderr.join('')
+
+    // Both were attempted, in an order that puts the failure first.
+    expect(out).toMatch(/aaa-broken\.bench\.ts:benchBroken/)
+    expect(out).toMatch(/wordcount\.bench\.ts:benchCountWords/)
+    expect(out.indexOf('aaa-broken')).toBeLessThan(out.indexOf('wordcount.bench.ts:benchCountWords'))
+
+    // The failure was reported...
+    expect(err).toMatch(/error:/)
+    expect(err).toMatch(/1 of 2 benchmark\(s\) could not be profiled/)
+    expect(code).toBe(2)
+
+    // ...and the one after it still produced a real profile. This is the
+    // no-early-return claim: without it, the surviving benchmark would
+    // never be reached and none of this would be printed.
+    expect(out).toMatch(/profile written to .*benchCountWords\.cpuprofile/)
+    expect(await exists(path.join(root, '.autor3search', 'profiles'))).toBe(true)
+  }, 300_000)
 
   it('fails cleanly when config declares a benchmark that no longer exists', async () => {
     const root = await makeDemoRepo()

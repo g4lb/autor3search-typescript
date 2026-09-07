@@ -95,7 +95,7 @@ describe('runChild', () => {
     )
 
     await withPrivateTmpdir(async () => {
-      const before = await leftoverOutDirs()
+      const before = new Set(await leftoverOutDirs())
       const r = await runChild({
         cwd: dir,
         benchFileAbs: file,
@@ -112,10 +112,13 @@ describe('runChild', () => {
       if (r.ok) return
       expect(r.error).toMatch(/timed out/i)
       // The temp --out directory must be cleaned up even though the child
-      // never wrote to it. Measured against a private root (see
-      // withPrivateTmpdir) so a concurrent sibling test's own in-flight
-      // ars-out-* directory can never inflate this count.
-      expect(after.length).toBe(before.length)
+      // never wrote to it. Compared as a SET DIFFERENCE, not as counts:
+      // counts also move when a directory DISAPPEARS, and on Windows a
+      // prior test's directory can still be finishing its (deferred)
+      // deletion while this one samples -- which failed here as
+      // "expected 0 to be 1", a leak assertion tripped by the absence of a
+      // leak. The difference names what actually leaked, and only that.
+      expect(after.filter((d) => !before.has(d))).toEqual([])
     })
   }, 15_000)
 
@@ -125,7 +128,7 @@ describe('runChild', () => {
     await writeFile(file, `export function benchA(): number {\n  return 1\n}\n`)
 
     await withPrivateTmpdir(async () => {
-      const before = await leftoverOutDirs()
+      const before = new Set(await leftoverOutDirs())
       // An unrecognized node flag makes node exit immediately with its own
       // "bad option" error, before our script (and therefore --out) is ever
       // reached -- a real "the child died before writing" case that is not a
@@ -148,7 +151,7 @@ describe('runChild', () => {
       // Measured against a private root (see withPrivateTmpdir) so a
       // concurrent sibling test's own in-flight ars-out-* directory can
       // never inflate this count.
-      expect(after.length).toBe(before.length)
+      expect(after.filter((d) => !before.has(d))).toEqual([])
     })
   })
 

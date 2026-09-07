@@ -38,13 +38,25 @@ async function leftoverOutDirs(): Promise<string[]> {
  */
 async function withPrivateTmpdir<T>(fn: () => Promise<T>): Promise<T> {
   const root = await mkdtemp(path.join(tmpdir(), 'ars-invoke-root-'))
-  const previous = process.env['TMPDIR']
-  process.env['TMPDIR'] = root
+  // `os.tmpdir()` reads DIFFERENT variables per platform: TMPDIR on POSIX,
+  // but TEMP then TMP on Windows. Setting only TMPDIR made this helper a
+  // no-op on Windows -- the child and the scan both fell back to the SHARED
+  // OS temp directory, where sibling test files running concurrently create
+  // their own ars-out-* directories through this very same runChild. The
+  // isolation this function exists to provide simply was not there, and the
+  // resulting cross-test contamination read as a leak
+  // ("expected [ 'ars-out-BwAMTK' ] to deeply equal []") in a test that had
+  // leaked nothing.
+  const vars = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR']
+  const previous = new Map(vars.map((v) => [v, process.env[v]]))
+  for (const v of vars) process.env[v] = root
   try {
     return await fn()
   } finally {
-    if (previous === undefined) delete process.env['TMPDIR']
-    else process.env['TMPDIR'] = previous
+    for (const [v, was] of previous) {
+      if (was === undefined) delete process.env[v]
+      else process.env[v] = was
+    }
     await rm(root, { recursive: true, force: true })
   }
 }

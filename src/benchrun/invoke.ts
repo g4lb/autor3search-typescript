@@ -164,15 +164,17 @@ export async function runChild(o: RunChildOptions): Promise<BenchResult> {
     // than left to propagate out of `finally` and clobber the return value
     // (or the rejection) above.
     try {
-      // maxRetries/retryDelay are for Windows. Killing a timed-out child
-      // there means `taskkill /T /F`, and the OS can hold the dead
-      // process's handles on this directory briefly afterwards -- long
-      // enough that an immediate rm fails with EBUSY/EPERM and, because the
-      // failure is (correctly) swallowed below, leaks the directory
-      // silently. Observed exactly that on the Windows CI leg: a real,
-      // Windows-only leak that only became visible once the test compared
-      // leaked directories by name instead of by count. Node retries these
-      // specific errno values itself when asked.
+      // maxRetries/retryDelay are insurance for Windows, where killing a
+      // timed-out child means `taskkill /T /F` and the OS can briefly hold
+      // the dead process's handles on this directory -- long enough for an
+      // immediate rm to fail with EBUSY/EPERM and, because the failure is
+      // (correctly) swallowed below, leak it silently.
+      //
+      // Kept as defence, NOT as a fix for anything observed: the leak this
+      // was first added for turned out not to be a leak at all, but a test
+      // helper that failed to isolate on Windows (it set TMPDIR, which
+      // `os.tmpdir()` ignores there). Node retries these errno values when
+      // asked, and the cost when there is nothing to retry is zero.
       await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     } catch {
       /* leak the directory rather than discard the result */

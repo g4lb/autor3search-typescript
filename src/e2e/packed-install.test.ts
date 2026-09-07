@@ -106,7 +106,18 @@ describe('the packed, installed artifact', () => {
       timeoutMs: 600_000,
     })
     expect(dry.exitCode).toBe(0)
-    expect(dry.stdout + dry.stderr).not.toMatch(/npm warn/)
+
+    // Scoped to `npm warn publish`, which is the prefix npm uses for
+    // MANIFEST corrections ('"bin[...]" script name was cleaned'). A bare
+    // /npm warn/ also catches warnings about the ENVIRONMENT, and one of
+    // those broke CI for five commits: an unauthenticated npm prints
+    // 'npm warn This command requires you to be logged in ... (dry-run)'.
+    // It passed locally the whole time because this machine is logged in --
+    // which is exactly why the fix was verified against a logged-out npm
+    // (npm_config_userconfig=/dev/null) in both states before landing:
+    // 3 matching lines with the bad bin path, 0 with the good one.
+    const dryOutput = dry.stdout + dry.stderr
+    expect(dryOutput).not.toMatch(/npm warn publish/)
   })
 
   it('runs from the installed symlink instead of silently exiting 0', async () => {

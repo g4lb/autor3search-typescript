@@ -48,7 +48,13 @@ describe('acquireEvalLock', () => {
     expect(await readEvalLock(dir)).toBeNull()
   })
 
-  it('does NOT reclaim a present lock it fails to read (e.g. permission denied)', async () => {
+  // POSIX-only: this simulates the failure with chmod 000, and Windows has no
+  // equivalent -- Node's chmod there sets only the read-only bit, which does
+  // not deny reads, so the call under test succeeds and the assertion that it
+  // REFUSES to fall back cannot be made. Skipped rather than weakened: the
+  // behaviour still matters, and still has to hold, on the platforms where the
+  // condition can occur at all.
+  it.skipIf(process.platform === 'win32')('does NOT reclaim a present lock it fails to read (e.g. permission denied)', async () => {
     const dir = await tmp()
     const { writeFile, mkdir, chmod } = await import('node:fs/promises')
     await mkdir(dir, { recursive: true })

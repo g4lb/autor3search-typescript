@@ -27,7 +27,11 @@ describe('runDir', () => {
     const c = runDir('/repos/one', 'sep7', env)
     expect(a).not.toBe(b)
     expect(a).not.toBe(c)
-    expect(a.startsWith('/s/autor3search-typescript/')).toBe(true)
+    // Built with path.join, not a literal: on Windows the separator is a
+    // backslash and '/s' resolves against the current drive, so a hardcoded
+    // POSIX prefix asserts about the test's own platform rather than about
+    // the keying.
+    expect(a.startsWith(path.join('/s', 'autor3search-typescript'))).toBe(true)
   })
 
   it('is stable for the same repo and tag', () => {
@@ -63,7 +67,13 @@ describe('runDir', () => {
     expect(runDir(viaSymlink, 'sep6', env)).toBe(runDir(real, 'sep6', env))
   })
 
-  it('propagates a real traversal failure instead of silently falling back to a differently-keyed path', async () => {
+  // POSIX-only: this simulates the failure with chmod 000, and Windows has no
+  // equivalent -- Node's chmod there sets only the read-only bit, which does
+  // not deny reads, so the call under test succeeds and the assertion that it
+  // REFUSES to fall back cannot be made. Skipped rather than weakened: the
+  // behaviour still matters, and still has to hold, on the platforms where the
+  // condition can occur at all.
+  it.skipIf(process.platform === 'win32')('propagates a real traversal failure instead of silently falling back to a differently-keyed path', async () => {
     const env = { [STATE_HOME_ENV]: '/s' }
     const base = await mkdtemp(path.join(tmpdir(), 'ars-state-home-'))
     const blocked = path.join(base, 'blocked')

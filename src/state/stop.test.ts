@@ -43,7 +43,13 @@ describe('requestStop / readStop / clearStop', () => {
     await expect(readStop(dir)).resolves.toBeNull()
   })
 
-  it('surfaces a real read failure instead of reporting "no stop requested"', async () => {
+  // POSIX-only: this simulates the failure with chmod 000, and Windows has no
+  // equivalent -- Node's chmod there sets only the read-only bit, which does
+  // not deny reads, so the call under test succeeds and the assertion that it
+  // REFUSES to fall back cannot be made. Skipped rather than weakened: the
+  // behaviour still matters, and still has to hold, on the platforms where the
+  // condition can occur at all.
+  it.skipIf(process.platform === 'win32')('surfaces a real read failure instead of reporting "no stop requested"', async () => {
     const dir = await tmp()
     await requestStop(dir, true)
     const file = stopPath(dir)

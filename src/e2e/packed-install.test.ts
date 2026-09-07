@@ -83,7 +83,13 @@ describe('the packed, installed artifact', () => {
     installOutput = installed.stdout + installed.stderr
     if (installed.exitCode !== 0) throw new Error(`npm install failed:\n${installOutput}`)
 
-    bin = path.join(projectDir, 'node_modules', '.bin', 'autor3search-typescript')
+    // npm writes THREE shims on Windows: an extensionless shell script (for
+    // git-bash), a .cmd and a .ps1. Only the .cmd is runnable by cmd.exe, so
+    // spawning the extensionless path there fails -- the artifact is fine,
+    // the test was looking at the wrong file.
+    const binName =
+      process.platform === 'win32' ? 'autor3search-typescript.cmd' : 'autor3search-typescript'
+    bin = path.join(projectDir, 'node_modules', '.bin', binName)
   }, 900_000)
 
   afterAll(async () => {

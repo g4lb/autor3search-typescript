@@ -7,6 +7,7 @@ import { CONFIG_PATH } from '../config/schema.js'
 import { RESULTS_PATH } from '../results/results.js'
 import { headCommit, isClean } from '../gitx/git.js'
 import { run } from '../runner/exec.js'
+import { runDir } from '../state/home.js'
 import { makeDemoRepo } from '../testutil/demo.js'
 import { cmdInit, templatesDir } from './cmd-init.js'
 import type { RunCtx } from './runctx.js'
@@ -397,5 +398,22 @@ describe('cmdInit end-to-end against the demo fixture', () => {
     const [cmd, ...args] = cfg.testCommand.split(' ')
     const test = await run(cmd!, args, { cwd: root, timeoutMs: 60_000 })
     expect(test.exitCode).toBe(0)
+  })
+
+  it("prints a next-steps baseline command the tool actually accepts", async () => {
+    const root = await makeDemoRepo()
+    captureOutput()
+    expect(await cmdInit(ctxFor(root), [])).toBe(0)
+    const text = stdout.join('')
+
+    // `baseline` refuses without -tag, so a bare `... baseline` hint told every
+    // new user to run a command that errors on their very first step.
+    const m = /autor3search-typescript baseline -tag (\S+)/.exec(text)
+    expect(m).not.toBeNull()
+
+    // Regex-matching our own string would pass even if the tag were something
+    // baseline rejects, so put the printed tag through the same validation the
+    // real command applies to it.
+    expect(() => runDir(root, m![1]!)).not.toThrow()
   })
 })

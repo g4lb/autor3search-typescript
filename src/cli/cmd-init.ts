@@ -251,6 +251,18 @@ function fail(message: string): number {
 }
 
 /**
+ * A concrete tag for the next-steps hint, so the printed command is one the
+ * user can paste and have work. `baseline` REQUIRES `-tag`, so printing it
+ * without one told every new user to run a command that errors -- the first
+ * thing they do after `init`.
+ */
+function suggestedTag(): string {
+  const d = new Date()
+  const month = d.toLocaleString('en-US', { month: 'short' }).toLowerCase()
+  return `${month}${d.getDate()}`
+}
+
+/**
  * `init`: writes `.autor3search/config.yaml`, `program.md` and appends the
  * harness's own output paths to `.gitignore`.
  *
@@ -370,7 +382,7 @@ export async function cmdInit(ctx: RunCtx, argv: readonly string[]): Promise<num
         // requests) lives outside the repository entirely; nothing else
         // under .autor3search/ exists to commit.
         '  1. git add .autor3search/config.yaml program.md .gitignore && git commit\n' +
-        '  2. autor3search-typescript baseline\n' +
+        `  2. autor3search-typescript baseline -tag ${suggestedTag()}\n` +
         '  3. hand this repository and program.md to your coding agent\n',
     )
     return 0

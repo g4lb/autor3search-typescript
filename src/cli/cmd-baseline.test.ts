@@ -556,6 +556,63 @@ describe('cmdBaseline', () => {
     expect(recovered.frozenCommit).not.toBe(goodHead) // the retry pins the repaired tip
   })
 
+  // The candidate side is getting its own worktree so that `eval` measures
+  // a detached checkout of the candidate COMMIT rather than the user's live
+  // working tree. Created here, once, because package.json and the lockfile
+  // are immutable for the life of a run -- so one install stays valid.
+  it('creates a candidate worktree alongside the baseline one, with its own installed deps', async () => {
+    // makeFileDepRepo, not makeDemoRepo: the demo fixture has NO
+    // dependencies, so a successful install there creates no node_modules
+    // at all and the assertion below would be vacuous.
+    captureOutput()
+    const root = await makeFileDepRepo()
+    const ctx = ctxFor(root)
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6'])).toBe(0)
+
+    const dir = runDir(root, 'sep6')
+    const candidate = path.join(dir, 'candidate-worktree')
+    const base = path.join(dir, 'baseline-worktree')
+    expect(await exists(candidate)).toBe(true)
+
+    // Both sides are real checkouts of the same commit, each with its own
+    // node_modules -- not a symlink to the other or to the main repo, which
+    // would let one side's dependencies decide the other side's timings.
+    expect(await headCommit(candidate)).toBe(await headCommit(base))
+    expect(await exists(path.join(candidate, 'node_modules'))).toBe(true)
+    expect((await lstat(path.join(candidate, 'node_modules'))).isSymbolicLink()).toBe(false)
+
+    // Registered with git, so `repointWorktree` can move it per eval.
+    const list = await run('git', ['worktree', 'list'], { cwd: root, timeoutMs: 30_000 })
+    expect(list.stdout).toContain('candidate-worktree')
+  }, 300_000)
+
+  it('leaves neither worktree registered when it fails partway', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    captureOutput()
+    await initAndCommit(root, ctx)
+    await addAndCommit(
+      root,
+      'src/broken.bench.ts',
+      'export function benchBroken(): number {\n  throw new Error("boom")\n}\n',
+      'add a benchmark that throws',
+    )
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6'])).not.toBe(0)
+
+    // Two worktrees now exist, so the unwind tracks a LIST rather than a
+    // boolean: a stale registration for either one makes the next
+    // `addWorktree` at that path fail, and the retry-without--force path
+    // (Ruling 3) would stop working.
+    const list = await run('git', ['worktree', 'list'], { cwd: root, timeoutMs: 30_000 })
+    expect(list.stdout).not.toContain('candidate-worktree')
+    expect(list.stdout).not.toContain('baseline-worktree')
+    expect(await exists(runDir(root, 'sep6'))).toBe(false)
+  }, 300_000)
+
   it('refuses a declared benchmark id that no longer exists', async () => {
     const root = await makeDemoRepo()
     const ctx = ctxFor(root)

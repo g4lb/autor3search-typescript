@@ -21,6 +21,23 @@ export const BRANCH_PREFIX = 'autor3search-typescript/'
 /** Directory name, under the per-run state dir, of the pinned baseline worktree. */
 export const WORKTREE_DIRNAME = 'baseline-worktree'
 
+/**
+ * The candidate side's own worktree, sibling to the baseline's.
+ *
+ * `eval` used to measure the candidate in the USER'S working tree while the
+ * baseline side measured an isolated worktree. That asymmetry is what made
+ * a clean-tree gate necessary at all (a working tree can change between the
+ * check and the measurement), what forced the frozen-file restore to write
+ * into the user's own checkout, and what let one uncommitted edit be
+ * measured while a different commit was credited. Giving the candidate its
+ * own detached worktree makes both sides the same kind of thing.
+ *
+ * Its dependencies are installed once, by `baseline`, and stay valid for
+ * the whole run: `package.json` and the lockfile are immutable (see
+ * IMMUTABLE_FILES), so no commit the agent makes can change them.
+ */
+export const CANDIDATE_WORKTREE_DIRNAME = 'candidate-worktree'
+
 /** Directory name, under the per-run state dir, of the frozen test/bench snapshot. */
 export const FROZEN_DIRNAME = 'frozen'
 

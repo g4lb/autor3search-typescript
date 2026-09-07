@@ -22,7 +22,7 @@ import { detect } from '../pm/detect.js'
 import { ok, run, runShell, tail } from '../runner/exec.js'
 import { writeBaseline, type BaselineRecord } from '../state/baseline.js'
 import { runDir } from '../state/home.js'
-import { BRANCH_PREFIX, FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
+import { BRANCH_PREFIX, CANDIDATE_WORKTREE_DIRNAME, FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
 import type { RunCtx } from './runctx.js'
 
 const CHECKOUT_TIMEOUT_MS = 60_000
@@ -149,10 +149,11 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
       // With -force, tear down whatever the earlier run left behind before
       // anything new is created: removeWorktree first, or git keeps a
       // stale worktree registration and addWorktree below fails.
-      const worktreeDir = path.join(dir, WORKTREE_DIRNAME)
-      if (await exists(worktreeDir)) {
+      for (const name of [WORKTREE_DIRNAME, CANDIDATE_WORKTREE_DIRNAME]) {
+        const wt = path.join(dir, name)
+        if (!(await exists(wt))) continue
         try {
-          await removeWorktree(ctx.repoRoot, worktreeDir)
+          await removeWorktree(ctx.repoRoot, wt)
         } catch {
           // Not a registered worktree (e.g. a previous attempt failed
           // before addWorktree ran) -- the rm below still removes it from
@@ -236,8 +237,9 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
     }
 
     const worktreeDir = path.join(dir, WORKTREE_DIRNAME)
+    const candidateWorktreeDir = path.join(dir, CANDIDATE_WORKTREE_DIRNAME)
     const frozenDir = path.join(dir, FROZEN_DIRNAME)
-    let worktreeAdded = false
+    const addedWorktrees: string[] = []
 
     try {
       const head = await headCommit(ctx.repoRoot)
@@ -252,16 +254,29 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
       const manifest = await snapshot(ctx.repoRoot, freezable, frozenDir)
 
       await addWorktree(ctx.repoRoot, worktreeDir, head)
-      worktreeAdded = true
+      addedWorktrees.push(worktreeDir)
+
+      // The candidate side gets its own worktree, created here rather than
+      // per-eval so its dependencies are installed exactly once. That is
+      // sound because `package.json` and the lockfile are immutable for the
+      // life of a run (IMMUTABLE_FILES), so no commit the agent makes can
+      // invalidate this install. It costs a second node_modules on disk;
+      // the alternative -- measuring the candidate in the user's live
+      // working tree -- is what let a measurement and the commit it was
+      // credited to disagree.
+      await addWorktree(ctx.repoRoot, candidateWorktreeDir, head)
+      addedWorktrees.push(candidateWorktreeDir)
 
       const timeoutMs = parseDuration(config.timeout)
 
-      const install = await runShell(detected.installCommand, { cwd: worktreeDir, timeoutMs })
-      if (!ok(install)) {
-        throw new Error(
-          `installing dependencies in the worktree failed (${detected.installCommand}, exit ` +
-            `${install.exitCode}): ${tail(install.stderr || install.stdout, 40)}`,
-        )
+      for (const wt of [worktreeDir, candidateWorktreeDir]) {
+        const install = await runShell(detected.installCommand, { cwd: wt, timeoutMs })
+        if (!ok(install)) {
+          throw new Error(
+            `installing dependencies in ${path.basename(wt)} failed (${detected.installCommand}, exit ` +
+              `${install.exitCode}): ${tail(install.stderr || install.stdout, 40)}`,
+          )
+        }
       }
 
       // The smoke run: prove every declared benchmark actually runs in the
@@ -312,9 +327,13 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
       return 0
     } catch (e) {
       const reason = messageOf(e)
-      if (worktreeAdded) {
+      // Unwind every worktree this invocation actually registered, in
+      // reverse order. Tracked as a list rather than a boolean because
+      // there are now two, and a failure between the two `addWorktree`
+      // calls must not leave the first one registered with git.
+      for (const wt of [...addedWorktrees].reverse()) {
         try {
-          await removeWorktree(ctx.repoRoot, worktreeDir)
+          await removeWorktree(ctx.repoRoot, wt)
         } catch {
           // Best effort -- the directory removal below still gets rid of
           // it on disk even if git's own bookkeeping is left stale.

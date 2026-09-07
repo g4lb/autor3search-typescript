@@ -1,0 +1,27 @@
+name: codeql
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a newly published rule finds existing code rather than
+    # waiting for the next push to a repository that may be quiet for months.
+    - cron: '17 4 * * 1'
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # security-and-quality over the default: this repository's whole
+          # value proposition is that its gates cannot be talked around, so
+          # the quality rules (unused results, missing awaits) are worth as
+          # much here as the security ones.
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3

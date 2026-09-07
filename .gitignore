@@ -4,3 +4,7 @@ dist/
 results.tsv
 run.log
 *.cpuprofile
+
+# Superpowers specs, plans and run ledgers are local-only working artifacts.
+docs/
+.superpowers/

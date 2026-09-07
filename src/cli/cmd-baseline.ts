@@ -197,6 +197,24 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
     //   switches away from the branch it creates). There is nothing to
     //   recreate -- proceed with the existing checkout, at whatever commit
     //   it is already on.
+    //
+    //   That last clause is the whole of `-force`'s semantics, and it is
+    //   deliberate: the branch is NOT rewound to the commit the previous
+    //   baseline pinned. `head` is read below, after this block, so a
+    //   branch the agent has since advanced re-pins `frozenCommit` and
+    //   `measureCommit` at its CURRENT tip and re-derives the freeze
+    //   manifest from that commit's tree. `-force` means "the state of the
+    //   repository right now is the new contract," which is exactly what
+    //   you want when re-baselining on top of work you have reviewed and
+    //   decided to keep.
+    //
+    //   It is also why nothing in the harness may reach for `-force` on
+    //   its own. Run automatically after an interrupted advance, it would
+    //   adopt the agent's own commits as the correctness contract without
+    //   a human ever seeing them -- so `eval`'s gate 8 self-heals that
+    //   case itself instead of advising `-force` (see
+    //   `checkWorktreeIntegrity` in `pipeline/eval.ts`). `-force` is a
+    //   human's deliberate act, and stays one.
     // - It exists but is checked out nowhere here (a stale branch left
     //   over some other way): safe to delete outright, with no need to
     //   check out away from it first, and recreate fresh below.

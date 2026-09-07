@@ -450,6 +450,112 @@ describe('cmdBaseline', () => {
     expect(await branchExists(root, 'autor3search-typescript/sep6')).toBe(true)
   })
 
+  // Deferred item 6: `-force`'s reuse-in-place path was untested for the
+  // case that actually matters -- the branch having moved on since the last
+  // baseline. The semantics are deliberate (see the long comment at the
+  // reuse site in cmd-baseline.ts): `-force` adopts the repository as it is
+  // NOW as the new contract. Untested, that was indistinguishable from
+  // `-force` quietly re-pinning nothing and leaving a stale baseline behind.
+  it('re-pins a moved-on branch at its current tip, adopting the new commit as the contract', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    captureOutput()
+    await initAndCommit(root, ctx)
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6'])).toBe(0)
+    const dir = runDir(root, 'sep6')
+    const first = await readBaseline(dir)
+    const firstBenchHash = first.manifest.files['src/wordcount.bench.ts']
+
+    // A successful baseline leaves the repo checked out ON the run branch,
+    // which is the precondition for the reuse-in-place path.
+    expect(await currentBranch(root)).toBe('autor3search-typescript/sep6')
+
+    // Advance the branch, changing a FROZEN file, so re-deriving the
+    // manifest is observable and not merely asserted about commit ids.
+    const benchPath = path.join(root, 'src', 'wordcount.bench.ts')
+    const bench = await readFile(benchPath, 'utf8')
+    await writeFile(benchPath, `${bench}\n// a change made after the first baseline\n`, 'utf8')
+    await git(root, ['add', 'src/wordcount.bench.ts'])
+    await git(root, ['commit', '-q', '-m', 'move the branch on'])
+    const movedHead = await headCommit(root)
+    expect(movedHead).not.toBe(first.frozenCommit)
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6', '-force'])).toBe(0)
+
+    const second = await readBaseline(dir)
+    // Both commits move to the new tip: -force re-baselines, it does not
+    // rewind the branch to what the previous baseline pinned.
+    expect(second.frozenCommit).toBe(movedHead)
+    expect(second.measureCommit).toBe(movedHead)
+    expect(second.frozenCommit).not.toBe(first.frozenCommit)
+
+    // And the freeze manifest was re-derived from the NEW commit's content,
+    // rather than carried over -- the frozen contract really did change.
+    expect(second.manifest.files['src/wordcount.bench.ts']).not.toBe(firstBenchHash)
+    expect(second.manifest.files['src/wordcount.bench.ts']).toBe(
+      hashString(await readFile(benchPath, 'utf8')),
+    )
+  })
+
+  // The other half of deferred item 6: "-force reuse, then fail partway"
+  // was sound by inspection only. `createdBranch` stays false on the reuse
+  // path, so the unwind must NOT delete a branch this invocation merely
+  // borrowed -- deleting it would destroy the previous run's history on a
+  // failed re-baseline.
+  it('leaves a reused branch alone when a -force re-baseline fails partway', async () => {
+    const root = await makeDemoRepo()
+    const ctx = ctxFor(root)
+    captureOutput()
+    await initAndCommit(root, ctx)
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6'])).toBe(0)
+    const branch = 'autor3search-typescript/sep6'
+    expect(await currentBranch(root)).toBe(branch)
+    const goodHead = await headCommit(root)
+
+    // Break the repository so the -force re-baseline fails at the smoke
+    // test, AFTER the reuse-in-place decision has already been made.
+    await addAndCommit(
+      root,
+      'src/broken.bench.ts',
+      'export function benchBroken(): number {\n  throw new Error("boom")\n}\n',
+      'add a benchmark that throws',
+    )
+
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6', '-force'])).not.toBe(0)
+
+    // The branch survives, and the repo is still on it -- this invocation
+    // did not create it, so it was never this invocation's to destroy.
+    expect(await branchExists(root, branch)).toBe(true)
+    expect(await currentBranch(root)).toBe(branch)
+
+    // ...and it survives because the unwind never TRIED to delete it, not
+    // merely because git refused. Without this, the assertions above pass
+    // even with the `createdBranch` guard removed: the unwind would attempt
+    // the delete, git would refuse to remove a checked-out branch, the
+    // error would be swallowed into the "cleanup also failed" message, and
+    // the branch would still be standing. Verified by mutation -- dropping
+    // the guard leaves every check above green and only this one red.
+    const err = stderr.join('')
+    expect(err).toMatch(/benchBroken|boom|smoke/i) // the real reason is what is reported
+    expect(err).not.toMatch(/cleanup also failed to delete branch/)
+
+    // The run state IS gone, as a failed baseline's always is: -force tore
+    // the old one down before failing, so a retry needs no -force.
+    expect(await exists(runDir(root, 'sep6'))).toBe(false)
+
+    await removeAndCommit(root, 'src/broken.bench.ts', 'remove the broken benchmark')
+    captureOutput()
+    expect(await cmdBaseline(ctx, ['-tag', 'sep6'])).toBe(0)
+    const recovered = await readBaseline(runDir(root, 'sep6'))
+    expect(recovered.frozenCommit).not.toBe(goodHead) // the retry pins the repaired tip
+  })
+
   it('refuses a declared benchmark id that no longer exists', async () => {
     const root = await makeDemoRepo()
     const ctx = ctxFor(root)

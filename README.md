@@ -1,7 +1,7 @@
 # autor3search-typescript
 
 [![npm](https://img.shields.io/npm/v/autor3search-typescript?label=npm)](https://www.npmjs.com/package/autor3search-typescript)
-[![ci](https://github.com/g4lb/autor3search-typescript/actions/workflows/ci.yml/badge.svg)](https://github.com/g4lb/autor3search-typescript/actions/workflows/ci.yml)
+[![ci](https://github.com/autor3search/typescript/actions/workflows/ci.yml/badge.svg)](https://github.com/autor3search/typescript/actions/workflows/ci.yml)
 
 Let an AI coding agent loose on your repository's performance, without letting it grade its own homework. `autor3search-typescript` freezes your tests and benchmarks, measures every change the agent proposes against a baseline it cannot touch, and only keeps a commit that is a real, statistically significant, material win.
 
@@ -112,7 +112,7 @@ npx autor3search-typescript baseline -tag <tag>
 `init` refuses to run if it finds no exported `bench*` function in a `*.bench.ts` file, or no `test` script in `package.json` — this tool has nothing to gate or measure without both.
 
 To install from `main` ahead of a release instead of the last published version, use
-`npm install --save-dev g4lb/autor3search-typescript` — the GitHub form works too,
+`npm install --save-dev autor3search/typescript` — the GitHub form works too,
 just builds the tool on the way in instead of using a prebuilt tarball.
 
 ## Watching a run, and stopping it

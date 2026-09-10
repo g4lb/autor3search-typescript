@@ -1,5 +1,5 @@
 {
-  "name": "autor3search-typescript",
+  "name": "@autor3search/typescript",
   "version": "0.3.0",
   "description": "Autonomous AI-driven performance optimization for any TypeScript repository.",
   "type": "module",
@@ -12,6 +12,9 @@
   "homepage": "https://github.com/autor3search/typescript#readme",
   "bugs": {
     "url": "https://github.com/autor3search/typescript/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "benchmark",

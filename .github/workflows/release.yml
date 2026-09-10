@@ -5,7 +5,7 @@
 # linking the published tarball to this workflow run and commit.
 #
 # The npmjs.com side must name THIS FILE ("release.yml") as the trusted
-# publisher for autor3search-typescript. Renaming this file breaks publishing
+# publisher for @autor3search/typescript. Renaming this file breaks publishing
 # until the trusted publisher is updated to match.
 name: release
 

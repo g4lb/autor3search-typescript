@@ -1,10 +1,30 @@
 {
-  "name": "autor3search-typescript",
-  "version": "0.2.0",
+  "name": "@autor3search/typescript",
+  "version": "0.3.0",
   "description": "Autonomous AI-driven performance optimization for any TypeScript repository.",
   "type": "module",
   "license": "MIT",
   "author": "Gal Be <galevgi@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/autor3search/typescript.git"
+  },
+  "homepage": "https://github.com/autor3search/typescript#readme",
+  "bugs": {
+    "url": "https://github.com/autor3search/typescript/issues"
+  },
+  "keywords": [
+    "benchmark",
+    "performance",
+    "optimization",
+    "vitest",
+    "ai-agent",
+    "harness",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22"
   },

@@ -1,6 +1,6 @@
 # autor3search-typescript
 
-[![npm](https://img.shields.io/npm/v/autor3search-typescript?label=npm)](https://www.npmjs.com/package/autor3search-typescript)
+[![npm](https://img.shields.io/npm/v/@autor3search/typescript?label=npm)](https://www.npmjs.com/package/@autor3search/typescript)
 [![ci](https://github.com/autor3search/typescript/actions/workflows/ci.yml/badge.svg)](https://github.com/autor3search/typescript/actions/workflows/ci.yml)
 
 Let an AI coding agent loose on your repository's performance, without letting it grade its own homework. `autor3search-typescript` freezes your tests and benchmarks, measures every change the agent proposes against a baseline it cannot touch, and only keeps a commit that is a real, statistically significant, material win.
@@ -16,7 +16,7 @@ paste this:
 Install and run autor3search-typescript on this repository, then optimize it.
 
 Setup:
-1. npm install --save-dev autor3search-typescript@^0.2.0
+1. npm install --save-dev @autor3search/typescript@^0.3.0
 2. npx autor3search-typescript init
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
    this tool can only optimize what it can measure.
@@ -101,7 +101,7 @@ An unattended loop that, commit by commit:
 ## Quick start
 
 ```bash
-npm install --save-dev autor3search-typescript@^0.2.0
+npm install --save-dev @autor3search/typescript@^0.3.0
 npx autor3search-typescript init
 # review .autor3search/config.yaml and program.md, then:
 git add .autor3search/config.yaml program.md .gitignore && git commit -m "chore: add autor3search-typescript"

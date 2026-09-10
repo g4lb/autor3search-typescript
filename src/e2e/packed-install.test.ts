@@ -155,7 +155,7 @@ describe('the packed, installed artifact', () => {
     const { readFile } = await import('node:fs/promises')
     const installedPkg = JSON.parse(
       await readFile(
-        path.join(projectDir, 'node_modules', '@autor3search', 'typescript', 'package.json'),
+        path.join(projectDir, 'node_modules', 'autor3search-typescript', 'package.json'),
         'utf8',
       ),
     ) as { version: string }

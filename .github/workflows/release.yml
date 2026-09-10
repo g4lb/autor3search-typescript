@@ -5,7 +5,7 @@
 # linking the published tarball to this workflow run and commit.
 #
 # The npmjs.com side must name THIS FILE ("release.yml") as the trusted
-# publisher for @autor3search/typescript. Renaming this file breaks publishing
+# publisher for autor3search-typescript. Renaming this file breaks publishing
 # until the trusted publisher is updated to match.
 name: release
 
@@ -64,6 +64,5 @@ jobs:
           echo "tag and package.json agree on $pkg"
 
       # No NODE_AUTH_TOKEN and no .npmrc: npm must find no credential in order
-      # to reach for the OIDC one. --access public because a scoped package is
-      # private by default (package.json also sets publishConfig.access).
+      # to reach for the OIDC one.
       - run: npm publish --access public

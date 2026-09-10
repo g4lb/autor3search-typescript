@@ -1,5 +1,5 @@
 {
-  "name": "@autor3search/typescript",
+  "name": "autor3search-typescript",
   "version": "0.3.0",
   "description": "Autonomous AI-driven performance optimization for any TypeScript repository.",
   "type": "module",
@@ -22,9 +22,6 @@
     "harness",
     "typescript"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "engines": {
     "node": ">=22"
   },

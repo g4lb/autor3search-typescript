@@ -9,7 +9,7 @@
     "type": "git",
     "url": "git+https://github.com/autor3search/typescript.git"
   },
-  "homepage": "https://github.com/autor3search/typescript#readme",
+  "homepage": "https://autor3search.dev",
   "bugs": {
     "url": "https://github.com/autor3search/typescript/issues"
   },
@@ -17,6 +17,7 @@
     "access": "public"
   },
   "keywords": [
+    "autoresearch",
     "benchmark",
     "performance",
     "optimization",

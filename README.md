@@ -3,6 +3,8 @@
 [![npm](https://img.shields.io/npm/v/@autor3search/typescript?label=npm)](https://www.npmjs.com/package/@autor3search/typescript)
 [![ci](https://github.com/autor3search/typescript/actions/workflows/ci.yml/badge.svg)](https://github.com/autor3search/typescript/actions/workflows/ci.yml)
 
+[autoresearch for your codebase](https://autor3search.dev/) — the same loop in seven languages, with every agent prompt in one place.
+
 Let an AI coding agent loose on your repository's performance, without letting it grade its own homework. `autor3search-typescript` freezes your tests and benchmarks, measures every change the agent proposes against a baseline it cannot touch, and only keeps a commit that is a real, statistically significant, material win.
 
 Licensed under the [MIT License](./LICENSE). Copyright (c) 2026 Gal Be.

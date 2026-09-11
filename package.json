@@ -1,6 +1,6 @@
 {
   "name": "@autor3search/typescript",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Autonomous AI-driven performance optimization for any TypeScript repository.",
   "type": "module",
   "license": "MIT",
